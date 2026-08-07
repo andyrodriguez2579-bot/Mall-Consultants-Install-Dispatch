@@ -7,7 +7,7 @@ import { requireAdmin } from "@/lib/auth";
 import { parseInstallRequest } from "@/lib/intake/parse";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, PriceListItem } from "@/lib/types";
-import { lineItemsTotal, readLineItems, readWorkOrderFields } from "@/lib/line-items";
+import { readPricingForm, upsertJobPricing, validatePricing } from "@/lib/pricing-form";
 import { fieldErrors, jobFormSchema, readMulti } from "@/lib/validation";
 
 export interface RequestState {
@@ -101,30 +101,22 @@ export async function convertRequestToJob(
 
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
 
-  const lineItems = readLineItems(formData);
-  const usesLineItems = lineItems.length > 0;
+  const pricing = readPricingForm(formData);
+  const pricingErrors = validatePricing(pricing);
+  if (pricingErrors) return { errors: pricingErrors };
 
-  if (!usesLineItems && parsed.data.contractor_pay <= 0) {
-    return {
-      errors: {
-        contractor_pay:
-          "Add priced work items, or set a contractor payment for this job.",
-      },
-    };
-  }
-
-  const { skill_ids, contractor_pay, ...fields } = parsed.data;
+  const { skill_ids, contractor_pay: _ignored, ...fields } = parsed.data;
   const supabase = await createClient();
 
   const { data: job, error } = await supabase
     .from("jobs")
     .insert({
       ...fields,
-      // Line items are the source of truth when present; the trigger recomputes
-      // the total from them the moment they are inserted below.
-      contractor_pay_cents: usesLineItems ? lineItemsTotal(lineItems) : contractor_pay,
-      pay_source: usesLineItems ? "line_items" : "manual",
-      ...readWorkOrderFields(formData),
+      ...pricing.jobFields,
+      site_contact_name: (formData.get("site_contact_name") as string)?.trim() || null,
+      site_contact_phone: (formData.get("site_contact_phone") as string)?.trim() || null,
+      access_notes: (formData.get("access_notes") as string)?.trim() || null,
+      customer_reference: (formData.get("customer_reference") as string)?.trim() || null,
       status: "ready",
       created_by: admin.id,
     })
@@ -133,12 +125,8 @@ export async function convertRequestToJob(
 
   if (error || !job) return { error: error?.message ?? "Could not create the job." };
 
-  if (usesLineItems) {
-    const { error: lineError } = await supabase
-      .from("job_line_items")
-      .insert(lineItems.map((li) => ({ ...li, job_id: job.id })));
-    if (lineError) return { error: lineError.message };
-  }
+  const { error: pricingError } = await upsertJobPricing(supabase, job.id, pricing, admin.id);
+  if (pricingError) return { error: pricingError };
 
   if (skill_ids.length > 0) {
     await supabase

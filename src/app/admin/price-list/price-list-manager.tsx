@@ -69,9 +69,17 @@ export function PriceListManager({ items }: { items: PriceListItem[] }) {
                       ) : null}
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold tabular-nums text-slate-900">
-                        {formatMoney(item.unit_price_cents)}
-                        <span className="font-normal text-slate-400">/{item.unit}</span>
+                      <span className="text-right">
+                        <span className="block text-sm font-semibold tabular-nums text-slate-900">
+                          {formatMoney(item.customer_labor_price_cents)}
+                          <span className="font-normal text-slate-400">/{item.unit}</span>
+                        </span>
+                        {/* What each side actually receives, so a rate can be
+                            sanity-checked without opening the calculator. */}
+                        <span className="block text-xs tabular-nums text-slate-500">
+                          contractor {formatMoney(item.contractor_labor_pay_cents)} · MC{" "}
+                          {formatMoney(item.mall_share_cents)}
+                        </span>
                       </span>
                       <button
                         type="button"
@@ -166,13 +174,18 @@ function ItemForm({ item, onDone }: { item?: PriceListItem; onDone: () => void }
             className={inputClass + " font-mono uppercase"}
           />
         </Field>
-        <Field label="Contractor rate (USD)" error={err.unit_price_cents} required>
+        <Field
+          label="Customer labor price (USD)"
+          error={err.customer_labor_price_cents}
+          required
+          hint="What the customer is charged. The contractor share is derived from it."
+        >
           <input
-            name="unit_price"
-            defaultValue={item ? (item.unit_price_cents / 100).toFixed(2) : ""}
+            name="customer_price"
+            defaultValue={item ? (item.customer_labor_price_cents / 100).toFixed(2) : ""}
             required
             inputMode="decimal"
-            placeholder="180.00"
+            placeholder="120.00"
             className={inputClass}
           />
         </Field>
@@ -184,9 +197,24 @@ function ItemForm({ item, onDone }: { item?: PriceListItem; onDone: () => void }
         </Field>
       </div>
 
-      <Field label="Description" error={err.description}>
-        <textarea name="description" rows={2} defaultValue={item?.description ?? ""} className={inputClass} />
+      <Field label="Scope description" error={err.scope_description}>
+        <textarea
+          name="scope_description"
+          rows={2}
+          defaultValue={item?.scope_description ?? item?.description ?? ""}
+          className={inputClass}
+        />
       </Field>
+
+      {item ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          At {(item.contractor_percentage_bps / 100).toFixed(0)}% the contractor receives{" "}
+          <span className="font-semibold">{formatMoney(item.contractor_labor_pay_cents)}</span> and
+          Mall Consultants keeps{" "}
+          <span className="font-semibold">{formatMoney(item.mall_share_cents)}</span>. Mileage and
+          reimbursables are separate.
+        </p>
+      ) : null}
 
       <div className="flex gap-2">
         <Submit label={item ? "Save" : "Add work item"} />

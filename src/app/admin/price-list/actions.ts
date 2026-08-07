@@ -30,8 +30,9 @@ const itemSchema = z.object({
     .regex(/^[A-Z0-9]+(-[A-Z0-9]+)*$/, "Use letters, digits and hyphens, e.g. SSDC-SWAP."),
   name: z.string().trim().min(2, "Give the work item a name."),
   description: z.string().trim().optional().transform((v) => v || null),
-  unit_price_cents: priceSchema,
+  customer_labor_price_cents: priceSchema,
   unit: z.string().trim().min(1).default("each"),
+  scope_description: z.string().trim().optional().transform((v) => v || null),
   category: z.string().trim().optional().transform((v) => v || null),
 });
 
@@ -40,7 +41,8 @@ function read(formData: FormData) {
     code: formData.get("code") ?? "",
     name: formData.get("name") ?? "",
     description: formData.get("description") ?? "",
-    unit_price_cents: formData.get("unit_price") ?? "",
+    customer_labor_price_cents: formData.get("customer_price") ?? "",
+    scope_description: formData.get("scope_description") ?? "",
     unit: formData.get("unit") || "each",
     category: formData.get("category") ?? "",
   });

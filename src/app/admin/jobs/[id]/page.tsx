@@ -26,7 +26,7 @@ import type {
   ContractorMatch,
   Job,
   JobAttachment,
-  JobLineItem,
+  JobFinancials,
   JobOffer,
   Profile,
   Skill,
@@ -62,7 +62,7 @@ export default async function AdminJobDetail({
     { data: assigneeRow },
     { data: matchRows },
     { data: auditRows },
-    { data: lineItemRows },
+    { data: financials },
   ] = await Promise.all([
     supabase
       .from("job_offers")
@@ -85,7 +85,7 @@ export default async function AdminJobDetail({
       .eq("entity_id", id)
       .order("created_at", { ascending: false })
       .limit(30),
-    supabase.from("job_line_items").select("*").eq("job_id", id).order("sort_order"),
+    supabase.from("job_financials").select("*").eq("job_id", id).maybeSingle<JobFinancials>(),
   ]);
 
   const offers = (offerRows ?? []) as unknown as OfferRow[];
@@ -96,7 +96,6 @@ export default async function AdminJobDetail({
   const assignee = assigneeRow as Pick<Profile, "id" | "full_name" | "phone" | "email"> | null;
   const matches = (matchRows ?? []) as ContractorMatch[];
   const audit = (auditRows ?? []) as AuditEntry[];
-  const lineItems = (lineItemRows ?? []) as JobLineItem[];
 
   const photos = await signAttachments(
     attachments.filter((a) => a.kind === "before" || a.kind === "after"),
@@ -146,20 +145,10 @@ export default async function AdminJobDetail({
           <Detail label="Site" value={job.site_name ?? "—"} />
           <Detail label="Address" value={formatAddress(job)} className="sm:col-span-2" />
           <Detail
-            label="Contractor pay"
+            label="Total contractor payment"
             value={
-              <span>
-                <span className="text-base font-semibold">
-                  {formatMoney(job.contractor_pay_cents, job.currency)}
-                </span>
-                {job.pay_source === "manual" ? (
-                  <span className="ml-2 text-xs text-amber-700">
-                    set by hand
-                    {job.pay_override_reason ? ` — ${job.pay_override_reason}` : ""}
-                  </span>
-                ) : (
-                  <span className="ml-2 text-xs text-slate-500">from work items</span>
-                )}
+              <span className="text-base font-semibold">
+                {formatMoney(job.contractor_pay_cents, job.currency)}
               </span>
             }
           />
@@ -252,56 +241,82 @@ export default async function AdminJobDetail({
         </dl>
       </Card>
 
-      {lineItems.length > 0 ? (
+      {financials ? (
         <Card>
           <CardHeader
-            title="Work items"
-            description="How the contractor payment was built. Each row keeps the rate it was priced at."
+            title="Financial breakdown"
+            description="Administrator view. None of the customer-side figures reach the contractor."
           />
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-2 font-medium">Item</th>
-                  <th className="px-4 py-2 text-right font-medium">Qty</th>
-                  <th className="px-4 py-2 text-right font-medium">Rate</th>
-                  <th className="px-4 py-2 text-right font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {lineItems.map((li) => (
-                  <tr key={li.id}>
-                    <td className="px-4 py-2.5">
-                      <span className="font-medium text-slate-900">{li.description}</span>
-                      {li.code ? (
-                        <span className="ml-2 font-mono text-[11px] text-slate-400">
-                          {li.code}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
-                      {Number(li.quantity)} {li.unit}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
-                      {formatMoney(li.unit_price_cents, job.currency)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-medium tabular-nums text-slate-900">
-                      {formatMoney(li.line_total_cents, job.currency)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="border-t-2 border-slate-200 bg-slate-50">
-                <tr>
-                  <td colSpan={3} className="px-4 py-2.5 text-right font-medium text-slate-700">
-                    Contractor pay
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-base font-bold tabular-nums text-slate-900">
-                    {formatMoney(job.contractor_pay_cents, job.currency)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+          <div className="grid gap-5 p-4 sm:grid-cols-2 sm:p-5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Labor
+              </p>
+              <dl className="mt-2 space-y-1.5 text-sm">
+                <Row
+                  label={`Customer labor price x ${Number(financials.task_count)}`}
+                  value={financials.base_labor_total_cents}
+                />
+                {financials.additional_labor_cents > 0 ? (
+                  <Row label="Additional approved labor" value={financials.additional_labor_cents} />
+                ) : null}
+                <Row label="Total labor revenue" value={financials.total_labor_revenue_cents} strong />
+                <div className="!mt-2 border-t border-slate-200 pt-2" />
+                <Row
+                  label={`Contractor (${(financials.contractor_percentage_bps / 100).toFixed(0)}%)`}
+                  value={financials.contractor_labor_pay_cents}
+                />
+                <Row
+                  label={`Mall Consultants (${((10000 - financials.contractor_percentage_bps) / 100).toFixed(0)}%)`}
+                  value={financials.mall_share_cents}
+                />
+              </dl>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Passed through, not split
+              </p>
+              <dl className="mt-2 space-y-1.5 text-sm">
+                <Row
+                  label={`Mileage — ${Number(financials.payable_miles)} payable of ${Number(financials.contractor_miles)} at $${Number(financials.mileage_rate).toFixed(4)}`}
+                  value={financials.mileage_payment_cents}
+                />
+                {financials.materials_cents > 0 ? (
+                  <Row label="Materials" value={financials.materials_cents} />
+                ) : null}
+                {financials.tolls_parking_cents > 0 ? (
+                  <Row label="Tolls and parking" value={financials.tolls_parking_cents} />
+                ) : null}
+                {financials.hotel_cents > 0 ? (
+                  <Row label="Hotel" value={financials.hotel_cents} />
+                ) : null}
+                {financials.other_expenses_cents > 0 ? (
+                  <Row label="Other" value={financials.other_expenses_cents} />
+                ) : null}
+                <Row label="Total reimbursables" value={financials.total_expenses_cents} strong />
+              </dl>
+            </div>
+
+            <div className="rounded-lg bg-slate-900 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Total contractor payment
+              </p>
+              <p className="mt-0.5 text-2xl font-bold tabular-nums text-white">
+                {formatMoney(financials.total_contractor_payment_cents)}
+              </p>
+            </div>
+            <div className="rounded-lg bg-emerald-700 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-emerald-100">
+                Total customer charge
+              </p>
+              <p className="mt-0.5 text-2xl font-bold tabular-nums text-white">
+                {formatMoney(financials.total_customer_charge_cents)}
+              </p>
+              <p className="mt-1 text-xs text-emerald-100">
+                Margin {formatMoney(financials.mall_consultants_margin_cents)}
+              </p>
+            </div>
           </div>
         </Card>
       ) : null}
@@ -475,6 +490,26 @@ export default async function AdminJobDetail({
           </ul>
         )}
       </Card>
+    </div>
+  );
+}
+
+/** One line of the financial breakdown. */
+function Row({
+  label,
+  value,
+  strong,
+}: {
+  label: string;
+  value: number;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-slate-600">{label}</dt>
+      <dd className={`tabular-nums ${strong ? "font-semibold text-slate-900" : "text-slate-800"}`}>
+        {formatMoney(value)}
+      </dd>
     </div>
   );
 }

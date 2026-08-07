@@ -147,7 +147,58 @@ test/
 
 ---
 
-## Intake and pricing
+## Pricing
+
+Contractor pay is derived from the **customer** labor price, never entered
+directly:
+
+```
+Base Labor Total      = Customer Labor Price x Number of Tasks
+Total Labor Revenue   = Base Labor Total + Additional Approved Labor
+Contractor Labor Pay  = Total Labor Revenue x 45%
+Mall Consultants      = Total Labor Revenue - Contractor Labor Pay
+Payable Miles         = max(0, Contractor Miles - Excluded/Commuter Miles)
+Mileage Payment       = Payable Miles x Mileage Rate
+Total Contractor Pay  = Labor Pay + Mileage + Reimbursable Expenses
+Total Customer Charge = Total Labor Revenue + Mileage + Expenses
+```
+
+Two rules are load-bearing, and both are enforced by generated columns in the
+database rather than by application code:
+
+1. **The Mall Consultants share is revenue minus contractor pay**, never its own
+   55% multiplication. Two independently rounded percentages disagree with the
+   total by a cent on odd amounts; subtraction cannot. `test/pricing.test.mjs`
+   asserts the shares reconcile across a spread of awkward figures.
+2. **The split never touches mileage or reimbursables.** Those pass to the
+   contractor whole and are added after it.
+
+The percentages, the mileage rate and the commuter deduction are administrator
+settings (Admin → Settings), not code. Every job snapshots the percentage and
+rate it was quoted at, so changing a setting can never reprice work already
+accepted.
+
+### Who sees what
+
+The customer price and the Mall Consultants share live in a separate table,
+`job_pricing`, which has **no contractor-facing row-level policy at all**. That
+is the whole mechanism — not a matter of omitting columns from a query, which a
+future change could forget to do.
+
+| Contractor sees | Administrator sees |
+| --- | --- |
+| Service type, scope, location, schedule | Everything left, plus: |
+| Their labor pay | Customer labor price, number of tasks |
+| Mileage payment and payable miles | Total labor revenue |
+| Approved expense allowance | Contractor % and Mall Consultants share |
+| Total expected payment | Total customer charge and margin |
+
+A live TypeScript calculator (`src/lib/pricing.ts`) drives the form previews.
+`test/pricing-parity.test.mjs` checks it against the SQL across 252 input
+combinations, so the number an administrator approves is always the number the
+database stores.
+
+## Intake
 
 **Intake.** Paste the request into Admin → Requests exactly as it arrived. The
 parser reads labelled fields ("Customer:", "PO#:", "Date:"), and falls back to

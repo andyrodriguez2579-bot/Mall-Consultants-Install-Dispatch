@@ -314,8 +314,8 @@ test("pay stays fixed across the entire lifecycle", async () => {
   ]) {
     if (step) await query(step, [jobId, CONTRACTOR.marcus]);
     await assert.rejects(
-      query("update public.jobs set contractor_pay_cents = 1000 where id = $1", [jobId]),
-      /pay is fixed/i,
+      query("update public.jobs set contractor_labor_pay_cents = 1000 where id = $1", [jobId]),
+      /labor pay is fixed/i,
     );
   }
 

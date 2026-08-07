@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Job, JobLineItem, PriceListItem, Skill } from "@/lib/types";
-import type { EditableLineItem } from "@/components/line-item-editor";
+import type { Job, JobPricing, PriceListItem, Skill } from "@/lib/types";
+import type { PricingDefaults } from "@/components/pricing-panel";
 import { JobForm } from "../../job-form";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ export default async function EditJobPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: job }, { data: skills }, { data: jobSkills }, { data: priceList }, { data: lineItems }] =
+  const [{ data: job }, { data: skills }, { data: jobSkills }, { data: priceList }, { data: pricing }] =
     await Promise.all([
       supabase.from("jobs").select("*").eq("id", id).maybeSingle<Job>(),
       supabase
@@ -32,24 +32,29 @@ export default async function EditJobPage({
         .eq("is_active", true)
         .order("sort_order")
         .order("name"),
-      supabase.from("job_line_items").select("*").eq("job_id", id).order("sort_order"),
+      supabase.from("job_pricing").select("*").eq("job_id", id).maybeSingle<JobPricing>(),
     ]);
 
   if (!job) notFound();
 
-  // Existing rows keep the description and rate they were priced at, not
-  // whatever the catalogue says today.
-  const initialLineItems: EditableLineItem[] = ((lineItems ?? []) as JobLineItem[]).map(
-    (li) => ({
-      key: li.id,
-      price_list_item_id: li.price_list_item_id,
-      code: li.code,
-      description: li.description,
-      unit: li.unit,
-      unit_price_cents: li.unit_price_cents,
-      quantity: Number(li.quantity),
-    }),
-  );
+  // The job keeps the percentage it was priced at, so an edit never silently
+  // re-splits it at today's setting.
+  const pricingDefaults: PricingDefaults = {
+    serviceItemId: job.service_item_id,
+    customerLaborPriceCents: pricing?.customer_labor_price_cents,
+    taskCount: pricing ? Number(pricing.task_count) : 1,
+    additionalLaborCents: pricing?.additional_labor_cents,
+    additionalLaborReason: pricing?.additional_labor_reason,
+    contractorBps: pricing?.contractor_percentage_bps,
+    contractorMiles: Number(job.contractor_miles),
+    excludedMiles: Number(job.excluded_miles),
+    mileageRate: Number(job.mileage_rate),
+    estimatedMiles: job.estimated_miles === null ? null : Number(job.estimated_miles),
+    materialsCents: job.materials_cents,
+    tollsParkingCents: job.tolls_parking_cents,
+    hotelCents: job.hotel_cents,
+    otherExpensesCents: job.other_expenses_cents,
+  };
 
   return (
     <div className="space-y-5">
@@ -67,7 +72,7 @@ export default async function EditJobPage({
         selectedSkillIds={((jobSkills ?? []) as Array<{ skill_id: string }>).map(
           (s) => s.skill_id,
         )}
-        initialLineItems={initialLineItems}
+        pricingDefaults={pricingDefaults}
       />
     </div>
   );

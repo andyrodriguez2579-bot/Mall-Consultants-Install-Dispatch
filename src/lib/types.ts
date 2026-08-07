@@ -41,9 +41,6 @@ export type AttachmentKind = "brief" | "before" | "after" | "other";
 
 export type SmsStatus = "queued" | "logged" | "sent" | "delivered" | "failed" | "undelivered";
 
-/** How a job's contractor pay was arrived at. */
-export type PaySource = "line_items" | "manual";
-
 export type RequestStatus = "new" | "converted" | "discarded";
 
 export type AcceptResult =
@@ -114,6 +111,7 @@ export interface Job {
   postal_code: string;
   scope: string;
   instructions: string | null;
+  /** TOTAL paid to the contractor: labor + mileage + reimbursables. */
   contractor_pay_cents: number;
   currency: string;
   scheduled_start: string | null;
@@ -143,9 +141,36 @@ export interface Job {
   created_at: string;
   updated_at: string;
 
-  // Pricing (migration 0011)
-  pay_source: PaySource;
-  pay_override_reason: string | null;
+  // Pricing (migration 0014). The customer price and the Mall Consultants
+  // share deliberately do NOT live here -- they are in JobPricing, which
+  // contractors have no row-level policy granting access to.
+  service_item_id: string | null;
+  service_type: string | null;
+  account_number: string | null;
+  /** The contractor's labor share. Frozen at dispatch. */
+  contractor_labor_pay_cents: number;
+
+  // Mileage. Paid whole, never subject to the labor split.
+  start_odometer: number | null;
+  end_odometer: number | null;
+  contractor_miles: number;
+  excluded_miles: number;
+  mileage_rate: number;
+  estimated_miles: number | null;
+  payable_miles: number;
+  mileage_payment_cents: number;
+
+  // Reimbursable expenses. Also paid whole, and require approval.
+  materials_cents: number;
+  tolls_parking_cents: number;
+  hotel_cents: number;
+  other_expenses_cents: number;
+  total_expenses_cents: number;
+  expenses_approved_at: string | null;
+  expenses_approved_by: string | null;
+
+  site_latitude: number | null;
+  site_longitude: number | null;
 
   // Work order detail, released to the contractor on assignment (0013)
   site_contact_name: string | null;
@@ -166,26 +191,72 @@ export interface PriceListItem {
   code: string;
   name: string;
   description: string | null;
-  unit_price_cents: number;
+  scope_description: string | null;
+  /** What the CUSTOMER is charged per task. The contractor share derives from it. */
+  customer_labor_price_cents: number;
+  contractor_percentage_bps: number;
+  /** Generated in the database. */
+  contractor_labor_pay_cents: number;
+  /** Generated as price minus contractor pay, so the two always reconcile. */
+  mall_share_cents: number;
   unit: string;
   category: string | null;
+  allows_quantity: boolean;
+  allows_additional_labor: boolean;
+  allows_mileage: boolean;
   is_active: boolean;
   sort_order: number;
 }
 
-export interface JobLineItem {
-  id: string;
+/**
+ * The customer side of a job's money. Administrators only -- there is no
+ * row-level policy granting contractors access to this table, which is the
+ * mechanism keeping the customer price and Mall Consultants share invisible.
+ */
+export interface JobPricing {
   job_id: string;
-  price_list_item_id: string | null;
-  code: string | null;
-  description: string;
+  customer_labor_price_cents: number;
+  task_count: number;
+  additional_labor_cents: number;
+  additional_labor_reason: string | null;
+  additional_labor_approved_at: string | null;
+  additional_labor_approved_by: string | null;
+  contractor_percentage_bps: number;
+  /** All generated in the database. */
+  base_labor_total_cents: number;
+  total_labor_revenue_cents: number;
+  contractor_labor_pay_cents: number;
+  mall_share_cents: number;
+}
+
+/** Row shape of the admin-only job_financials view. */
+export interface JobFinancials extends JobPricing {
+  job_number: string;
+  status: JobStatus;
+  service_type: string | null;
+  customer_name: string;
+  account_number: string | null;
+  contractor_miles: number;
+  excluded_miles: number;
+  payable_miles: number;
+  mileage_rate: number;
+  mileage_payment_cents: number;
+  materials_cents: number;
+  tolls_parking_cents: number;
+  hotel_cents: number;
+  other_expenses_cents: number;
+  total_expenses_cents: number;
+  total_contractor_payment_cents: number;
+  total_customer_charge_cents: number;
+  mall_consultants_margin_cents: number;
+}
+
+export interface AppSetting {
+  key: string;
+  value: number;
   unit: string;
-  unit_price_cents: number;
-  quantity: number;
-  /** Generated in the database as unit_price_cents * quantity. */
-  line_total_cents: number;
-  sort_order: number;
-  created_at: string;
+  description: string;
+  updated_at: string;
 }
 
 export interface InstallRequest {

@@ -1,16 +1,17 @@
 /**
- * Pricing, work order and payment-run tests.
+ * Pricing tests: the 45/55 labor split, separate mileage, separate expenses.
  *
- * The money path is the part of this system a contractor will argue about, so
- * the guarantees it rests on -- a total that follows its work items, a rate
- * that cannot move after dispatch, a catalogue edit that cannot reach back into
- * a job already accepted -- are asserted here rather than assumed.
+ * This is the part of the system that decides what people get paid, so the
+ * rules are asserted rather than assumed -- including the property that matters
+ * most in practice: the two shares always add back up to the revenue, on every
+ * amount, with no cent lost to rounding.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ADMIN_ID,
   CONTRACTOR,
+  asUser,
   closePool,
   createOfferedJob,
   getJob,
@@ -18,404 +19,563 @@ import {
   sha256,
 } from "./helpers/db.mjs";
 
-async function priceItem(code) {
-  const [item] = await query("select * from public.price_list_items where code = $1", [code]);
-  return item;
-}
+const money = (cents) => (cents / 100).toFixed(2);
 
-/** A draft job with no line items yet. */
-async function createDraftJob({ payCents = 0, paySource = "line_items" } = {}) {
+async function createPricedJob({
+  customerPriceCents = 12000,
+  taskCount = 1,
+  additionalCents = 0,
+  bps = null,
+  status = "draft",
+} = {}) {
   const [job] = await query(
     `insert into public.jobs (
        status, title, customer_name, address_line1, city, state_code, postal_code,
-       scope, contractor_pay_cents, pay_source, created_by
-     ) values (
-       'draft', 'Pricing fixture', 'Fixture Customer', '1 Test Way', 'Houston', 'TX', '77002',
-       'Fixture scope', $1, $2, $3
-     ) returning id`,
-    [payCents, paySource, ADMIN_ID],
+       scope, created_by
+     ) values ($1, 'Pricing fixture', 'Fixture Customer', '1 Test Way',
+               'Houston', 'TX', '77002', 'Fixture scope', $2)
+     returning id`,
+    [status, ADMIN_ID],
   );
+
+  await query(
+    `insert into public.job_pricing
+       (job_id, customer_labor_price_cents, task_count, additional_labor_cents,
+        additional_labor_approved_at, contractor_percentage_bps)
+     values ($1, $2, $3, $4, case when $4 > 0 then now() else null end,
+             coalesce($5, public.default_contractor_bps()))`,
+    [job.id, customerPriceCents, taskCount, additionalCents, bps],
+  );
+
   return job.id;
 }
 
-async function addLine(jobId, item, quantity) {
+const pricingOf = async (jobId) =>
+  (await query("select * from public.job_pricing where job_id = $1", [jobId]))[0];
+
+// ---------------------------------------------------------------------------
+// The worked example from the specification
+// ---------------------------------------------------------------------------
+
+test("the A-Program worked example reproduces exactly", async () => {
+  // Customer labor price $120.00, 1 task, no additional labor,
+  // 50 miles driven, 30 excluded, $0.725/mile.
+  const jobId = await createPricedJob({ customerPriceCents: 12000, taskCount: 1 });
+
   await query(
-    `insert into public.job_line_items
-       (job_id, price_list_item_id, code, description, unit, unit_price_cents, quantity)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
-    [jobId, item.id, item.code, item.name, item.unit, item.unit_price_cents, quantity],
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Line items drive the total
-// ---------------------------------------------------------------------------
-
-test("a job's pay is the sum of its work items", async () => {
-  const jobId = await createDraftJob();
-  const swap = await priceItem("SSDC-SWAP");
-  const trip = await priceItem("TRIP-STD");
-
-  await addLine(jobId, swap, 2);
-  await addLine(jobId, trip, 1);
-
-  const job = await getJob(jobId);
-  assert.equal(job.contractor_pay_cents, swap.unit_price_cents * 2 + trip.unit_price_cents);
-});
-
-test("changing a quantity recomputes the total", async () => {
-  const jobId = await createDraftJob();
-  const swap = await priceItem("SSDC-SWAP");
-  await addLine(jobId, swap, 1);
-
-  await query("update public.job_line_items set quantity = 3 where job_id = $1", [jobId]);
-
-  assert.equal((await getJob(jobId)).contractor_pay_cents, swap.unit_price_cents * 3);
-});
-
-test("removing every work item takes the total to zero", async () => {
-  const jobId = await createDraftJob();
-  await addLine(jobId, await priceItem("SSDC-SWAP"), 2);
-  await query("delete from public.job_line_items where job_id = $1", [jobId]);
-
-  assert.equal((await getJob(jobId)).contractor_pay_cents, 0);
-});
-
-test("fractional quantities are priced correctly", async () => {
-  const jobId = await createDraftJob();
-  const labour = await priceItem("LABOR-HR"); // 8500 cents/hour
-  await addLine(jobId, labour, 2.5);
-
-  assert.equal((await getJob(jobId)).contractor_pay_cents, Math.round(8500 * 2.5));
-});
-
-test("a manually priced job ignores its work items", async () => {
-  const jobId = await createDraftJob({ payCents: 99000, paySource: "manual" });
-  await addLine(jobId, await priceItem("SSDC-SWAP"), 1);
-
-  assert.equal(
-    (await getJob(jobId)).contractor_pay_cents,
-    99000,
-    "an overridden total must not be recomputed",
-  );
-});
-
-// ---------------------------------------------------------------------------
-// The catalogue cannot reach backwards
-// ---------------------------------------------------------------------------
-
-test("re-pricing the catalogue leaves existing jobs untouched", async () => {
-  const jobId = await createDraftJob();
-  const swap = await priceItem("SSDC-SWAP");
-  await addLine(jobId, swap, 2);
-
-  const before = (await getJob(jobId)).contractor_pay_cents;
-
-  await query("update public.price_list_items set unit_price_cents = 999999 where id = $1", [
-    swap.id,
-  ]);
-
-  const line = (
-    await query("select unit_price_cents from public.job_line_items where job_id = $1", [jobId])
-  )[0];
-
-  assert.equal(line.unit_price_cents, swap.unit_price_cents, "the job keeps its own rate");
-  assert.equal((await getJob(jobId)).contractor_pay_cents, before);
-
-  await query("update public.price_list_items set unit_price_cents = $1 where id = $2", [
-    swap.unit_price_cents,
-    swap.id,
-  ]);
-});
-
-test("retiring a catalogue item does not disturb jobs that used it", async () => {
-  const jobId = await createDraftJob();
-  const item = await priceItem("LIFT-DAY");
-  await addLine(jobId, item, 1);
-
-  await query("update public.price_list_items set is_active = false where id = $1", [item.id]);
-  assert.equal((await getJob(jobId)).contractor_pay_cents, item.unit_price_cents);
-
-  await query("update public.price_list_items set is_active = true where id = $1", [item.id]);
-});
-
-// ---------------------------------------------------------------------------
-// Locking at dispatch
-// ---------------------------------------------------------------------------
-
-test("work items cannot be added once a job is dispatched", async () => {
-  const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
-  const item = await priceItem("SSDC-SWAP");
-
-  await assert.rejects(
-    addLine(jobId, item, 1),
-    /cannot be changed once a job is dispatched/i,
-  );
-});
-
-test("work items cannot be edited or removed once a job is dispatched", async () => {
-  const jobId = await createDraftJob();
-  await addLine(jobId, await priceItem("SSDC-SWAP"), 1);
-
-  await query("update public.jobs set status = 'offered' where id = $1", [jobId]);
-
-  await assert.rejects(
-    query("update public.job_line_items set quantity = 5 where job_id = $1", [jobId]),
-    /cannot be changed once a job is dispatched/i,
-  );
-  await assert.rejects(
-    query("delete from public.job_line_items where job_id = $1", [jobId]),
-    /cannot be changed once a job is dispatched/i,
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Explicit override
-// ---------------------------------------------------------------------------
-
-test("an override sets the total, records the reason, and switches pricing mode", async () => {
-  const jobId = await createDraftJob();
-  await addLine(jobId, await priceItem("SSDC-SWAP"), 2);
-
-  await query("select public.admin_override_job_pay($1, $2, $3, $4)", [
-    jobId,
-    125000,
-    "Customer negotiated a fixed price for the whole vestibule",
-    ADMIN_ID,
-  ]);
-
-  const job = await getJob(jobId);
-  assert.equal(job.contractor_pay_cents, 125000);
-  assert.equal(job.pay_source, "manual");
-  assert.match(job.pay_override_reason, /negotiated/);
-
-  const [audit] = await query(
-    "select detail from public.audit_log where entity_id = $1 and action = 'job.pay_overridden'",
+    `update public.jobs
+        set contractor_miles = 50, excluded_miles = 30, mileage_rate = 0.7250
+      where id = $1`,
     [jobId],
   );
-  assert.ok(audit, "the override must be in the audit log");
-  assert.equal(audit.detail.pay_cents, 125000);
-});
 
-test("an override without a reason is refused", async () => {
-  const jobId = await createDraftJob();
-  await assert.rejects(
-    query("select public.admin_override_job_pay($1, $2, $3, $4)", [jobId, 50000, "", ADMIN_ID]),
-    /needs a reason/i,
-  );
-});
-
-test("an override is refused once the job is dispatched", async () => {
-  const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
-  await assert.rejects(
-    query("select public.admin_override_job_pay($1, $2, $3, $4)", [
-      jobId,
-      1000,
-      "Trying to reprice after the fact",
-      ADMIN_ID,
-    ]),
-    /pay is fixed once a job is dispatched/i,
-  );
-});
-
-test("returning to line-item pricing recomputes from the work items", async () => {
-  const jobId = await createDraftJob();
-  const swap = await priceItem("SSDC-SWAP");
-  await addLine(jobId, swap, 2);
-
-  await query("select public.admin_override_job_pay($1, $2, $3, $4)", [
-    jobId,
-    125000,
-    "Temporary override",
-    ADMIN_ID,
-  ]);
-  await query("select public.admin_use_line_item_pricing($1, $2)", [jobId, ADMIN_ID]);
-
+  const pricing = await pricingOf(jobId);
   const job = await getJob(jobId);
-  assert.equal(job.pay_source, "line_items");
-  assert.equal(job.contractor_pay_cents, swap.unit_price_cents * 2);
-  assert.equal(job.pay_override_reason, null);
+
+  assert.equal(money(pricing.base_labor_total_cents), "120.00", "Base Labor Total");
+  assert.equal(money(pricing.total_labor_revenue_cents), "120.00", "Total Labor Revenue");
+  assert.equal(money(pricing.contractor_labor_pay_cents), "54.00", "Contractor Labor Pay");
+  assert.equal(money(pricing.mall_share_cents), "66.00", "Mall Consultants Share");
+  assert.equal(Number(job.payable_miles), 20, "Payable Miles");
+  assert.equal(money(job.mileage_payment_cents), "14.50", "Mileage Payment");
+  assert.equal(money(job.contractor_pay_cents), "68.50", "Total Contractor Payment");
+
+  const [fin] = await query(
+    "select * from public.job_financials where job_id = $1",
+    [jobId],
+  );
+  assert.equal(money(fin.total_customer_charge_cents), "134.50", "Total Customer Charge");
+});
+
+test("the SSDC-A-PROGRAM catalogue record is priced as specified", async () => {
+  const [item] = await query(
+    "select * from public.price_list_items where code = 'SSDC-A-PROGRAM'",
+  );
+
+  assert.ok(item, "the reference record must exist");
+  assert.equal(item.name, "SSDC A-Program Installation");
+  assert.equal(item.category, "SSDC Installation");
+  assert.equal(money(item.customer_labor_price_cents), "120.00");
+  assert.equal(item.contractor_percentage_bps, 4500);
+  assert.equal(money(item.contractor_labor_pay_cents), "54.00");
+  assert.equal(money(item.mall_share_cents), "66.00");
+  assert.equal(item.is_active, true);
 });
 
 // ---------------------------------------------------------------------------
-// Friday payment runs
+// The split
 // ---------------------------------------------------------------------------
 
-test("next_friday lands on the coming Friday", async () => {
-  const cases = [
-    ["2026-04-20", "2026-04-24"], // Monday   -> that Friday
-    ["2026-04-23", "2026-04-24"], // Thursday -> tomorrow
-    ["2026-04-24", "2026-04-24"], // Friday   -> today
-    ["2026-04-25", "2026-05-01"], // Saturday -> next week
-    ["2026-04-26", "2026-05-01"], // Sunday   -> next week
-  ];
+test("quantity multiplies the customer price before the split", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 12000, taskCount: 3 });
+  const p = await pricingOf(jobId);
 
-  for (const [from, expected] of cases) {
-    const [row] = await query("select public.next_friday($1::date)::text as d", [from]);
-    assert.equal(row.d, expected, `${from} should schedule into ${expected}`);
+  assert.equal(money(p.base_labor_total_cents), "360.00");
+  assert.equal(money(p.contractor_labor_pay_cents), "162.00"); // 45% of 360
+  assert.equal(money(p.mall_share_cents), "198.00");
+});
+
+test("approved additional labor is added before the split", async () => {
+  const jobId = await createPricedJob({
+    customerPriceCents: 12000,
+    taskCount: 1,
+    additionalCents: 4060, // one hour at the workbook's $40.60 allowance
+  });
+  const p = await pricingOf(jobId);
+
+  assert.equal(money(p.total_labor_revenue_cents), "160.60");
+  assert.equal(money(p.contractor_labor_pay_cents), "72.27"); // 45% of 160.60
+  assert.equal(money(p.mall_share_cents), "88.33");
+  assert.equal(
+    p.contractor_labor_pay_cents + p.mall_share_cents,
+    p.total_labor_revenue_cents,
+  );
+});
+
+test("the two shares always add back up to the revenue, on any amount", async () => {
+  // The reason the Mall Consultants share is subtraction rather than its own
+  // 55% multiplication: on odd amounts the two percentages would each round up
+  // and lose a cent between them.
+  const awkward = [1, 3, 7, 33, 99, 101, 4999, 12345, 67891, 100003, 999999];
+
+  for (const cents of awkward) {
+    const jobId = await createPricedJob({ customerPriceCents: cents, taskCount: 1 });
+    const p = await pricingOf(jobId);
+
+    assert.equal(
+      p.contractor_labor_pay_cents + p.mall_share_cents,
+      p.total_labor_revenue_cents,
+      `shares must reconcile at ${cents} cents`,
+    );
+    assert.ok(p.contractor_labor_pay_cents >= 0 && p.mall_share_cents >= 0);
   }
 });
 
-test("approving work schedules it into a Friday run", async () => {
+test("the contractor percentage is configurable and applied", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 20000, bps: 5000 });
+  const p = await pricingOf(jobId);
+
+  assert.equal(money(p.contractor_labor_pay_cents), "100.00");
+  assert.equal(money(p.mall_share_cents), "100.00");
+});
+
+test("changing the setting does not reprice a job already quoted", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
+  const before = await pricingOf(jobId);
+  assert.equal(money(before.contractor_labor_pay_cents), "54.00");
+
+  await query(
+    "update public.app_settings set value = 6000 where key = 'contractor_percentage_bps'",
+  );
+  try {
+    const after = await pricingOf(jobId);
+    assert.equal(
+      money(after.contractor_labor_pay_cents),
+      "54.00",
+      "the job keeps the percentage it was priced at",
+    );
+
+    // A new job picks the new rate up.
+    const freshId = await createPricedJob({ customerPriceCents: 12000 });
+    assert.equal(money((await pricingOf(freshId)).contractor_labor_pay_cents), "72.00");
+  } finally {
+    await query(
+      "update public.app_settings set value = 4500 where key = 'contractor_percentage_bps'",
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Mileage
+// ---------------------------------------------------------------------------
+
+test("the commuter deduction is applied and never goes negative", async () => {
+  const cases = [
+    [50, 30, 20],
+    [30, 30, 0],
+    [12, 30, 0], // a short trip inside the commuter radius pays nothing
+    [0, 30, 0],
+    [130.5, 30, 100.5],
+  ];
+
+  for (const [miles, excluded, expected] of cases) {
+    const [row] = await query("select public.calc_payable_miles($1, $2) as m", [
+      miles,
+      excluded,
+    ]);
+    assert.equal(Number(row.m), expected, `${miles} - ${excluded}`);
+    assert.ok(Number(row.m) >= 0, "payable miles can never be negative");
+  }
+});
+
+test("mileage is paid at the rate and is not subject to the split", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
+  await query(
+    "update public.jobs set contractor_miles = 130, excluded_miles = 30, mileage_rate = 0.70 where id = $1",
+    [jobId],
+  );
+
+  const job = await getJob(jobId);
+  assert.equal(Number(job.payable_miles), 100);
+  assert.equal(money(job.mileage_payment_cents), "70.00", "100 miles at $0.70");
+
+  // The contractor receives the mileage whole: labor 54.00 + mileage 70.00.
+  assert.equal(money(job.contractor_pay_cents), "124.00");
+
+  const [fin] = await query("select * from public.job_financials where job_id = $1", [jobId]);
+  assert.equal(
+    money(fin.mall_share_cents),
+    "66.00",
+    "the Mall Consultants share is unchanged by mileage",
+  );
+});
+
+test("recording mileage computes the payment and logs it", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
+  await query("select public.record_job_mileage($1, $2, $3, $4, $5, $6)", [
+    jobId,
+    88,
+    30,
+    120400,
+    120488,
+    ADMIN_ID,
+  ]);
+
+  const job = await getJob(jobId);
+  assert.equal(Number(job.payable_miles), 58);
+  assert.equal(Number(job.start_odometer), 120400);
+  assert.equal(Number(job.end_odometer), 120488);
+
+  const [entry] = await query(
+    "select detail from public.audit_log where entity_id = $1 and action = 'job.mileage_recorded'",
+    [jobId],
+  );
+  assert.ok(entry, "mileage must be auditable");
+  assert.equal(Number(entry.detail.payable), 58);
+});
+
+test("negative miles are refused", async () => {
+  const jobId = await createPricedJob();
+  await assert.rejects(
+    query("select public.record_job_mileage($1, $2, $3, null, null, $4)", [
+      jobId,
+      -10,
+      0,
+      ADMIN_ID,
+    ]),
+    /cannot be negative/i,
+  );
+});
+
+test("a contractor cannot record mileage on a job that is not theirs", async () => {
+  const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
+  await assert.rejects(
+    asUser(CONTRACTOR.dana, (c) =>
+      c.query("select public.record_job_mileage($1, $2)", [jobId, 40]),
+    ),
+    /not assigned to you/i,
+  );
+});
+
+test("estimated road miles are derived from the contractor's base", async () => {
+  // Houston 77002 to Friendswood 77546, roughly 22 straight-line miles.
+  const [row] = await query(
+    "select public.estimate_road_miles(29.7589, -95.3677, 29.5294, -95.1860, true) as m",
+  );
+  const miles = Number(row.m);
+  assert.ok(miles > 40 && miles < 80, `round trip estimate looked wrong: ${miles}`);
+
+  const [same] = await query(
+    "select public.estimate_road_miles(29.7589, -95.3677, 29.7589, -95.3677, true) as m",
+  );
+  assert.equal(Number(same.m), 0);
+
+  const [missing] = await query(
+    "select public.estimate_road_miles(null, null, 29.5, -95.1, true) as m",
+  );
+  assert.equal(missing.m, null, "no coordinates means no estimate, not a wrong one");
+});
+
+// ---------------------------------------------------------------------------
+// Reimbursable expenses
+// ---------------------------------------------------------------------------
+
+test("expenses pass through whole and are not split", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
+
+  await query("select public.admin_approve_expenses($1, $2, $3, $4, $5, $6)", [
+    jobId,
+    4235, // materials
+    1800, // tolls and parking
+    13900, // hotel
+    500, // other
+    ADMIN_ID,
+  ]);
+
+  const job = await getJob(jobId);
+  assert.equal(money(job.total_expenses_cents), "204.35");
+  assert.equal(money(job.contractor_pay_cents), "258.35", "54.00 labor + 204.35 expenses");
+
+  const [fin] = await query("select * from public.job_financials where job_id = $1", [jobId]);
+  assert.equal(money(fin.mall_share_cents), "66.00", "expenses do not change the share");
+  assert.equal(money(fin.total_customer_charge_cents), "324.35", "120.00 + 204.35");
+});
+
+test("expense approval is stamped with who approved it", async () => {
+  const jobId = await createPricedJob();
+  await query("select public.admin_approve_expenses($1, $2, 0, 0, 0, $3)", [
+    jobId,
+    2500,
+    ADMIN_ID,
+  ]);
+
+  const job = await getJob(jobId);
+  assert.equal(job.expenses_approved_by, ADMIN_ID);
+  assert.ok(job.expenses_approved_at);
+
+  const [entry] = await query(
+    "select detail from public.audit_log where entity_id = $1 and action = 'job.expenses_approved'",
+    [jobId],
+  );
+  assert.ok(entry);
+});
+
+test("negative expenses are refused", async () => {
+  const jobId = await createPricedJob();
+  await assert.rejects(
+    query("select public.admin_approve_expenses($1, -100, 0, 0, 0, $2)", [jobId, ADMIN_ID]),
+    /cannot be negative/i,
+  );
+});
+
+test("unapproved additional labor cannot be stored", async () => {
+  const [job] = await query(
+    `insert into public.jobs (status, title, customer_name, address_line1, city,
+                              state_code, postal_code, scope, created_by)
+     values ('draft','x','x','1 Test Way','Houston','TX','77002','x',$1) returning id`,
+    [ADMIN_ID],
+  );
+
+  await assert.rejects(
+    query(
+      `insert into public.job_pricing (job_id, customer_labor_price_cents, additional_labor_cents)
+       values ($1, 12000, 5000)`,
+      [job.id],
+    ),
+    /job_pricing_additional_labor_approval/i,
+    "additional labor requires an approval timestamp",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Freezing at dispatch
+// ---------------------------------------------------------------------------
+
+test("customer pricing is frozen once a job is dispatched", async () => {
+  // Price it while it is still a draft, then dispatch it.
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
+  await query("update public.jobs set status = 'offered' where id = $1", [jobId]);
+
+  await assert.rejects(
+    query(
+      "update public.job_pricing set customer_labor_price_cents = 99900 where job_id = $1",
+      [jobId],
+    ),
+    /pricing is fixed once a job is dispatched/i,
+  );
+
+  await assert.rejects(
+    query("update public.job_pricing set task_count = 9 where job_id = $1", [jobId]),
+    /pricing is fixed once a job is dispatched/i,
+  );
+
+  assert.equal(
+    (await pricingOf(jobId)).customer_labor_price_cents,
+    12000,
+    "the quoted price must survive the attempt",
+  );
+});
+
+test("pricing cannot be attached to a job after it has been dispatched", async () => {
+  const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
+  await assert.rejects(
+    query(
+      `insert into public.job_pricing (job_id, customer_labor_price_cents, task_count)
+       values ($1, 12000, 1)`,
+      [jobId],
+    ),
+    /pricing is fixed once a job is dispatched/i,
+  );
+});
+
+test("expenses can still be approved after dispatch, unlike labor", async () => {
+  // Reimbursables are only knowable after the trip, and sit outside the labor
+  // agreement by definition, so they must remain addable.
+  const { jobId, tokens } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
+  await query("select * from public.accept_job_offer($1)", [sha256(tokens[CONTRACTOR.marcus])]);
+
+  await query("select public.admin_approve_expenses($1, 3000, 1200, 0, 0, $2)", [
+    jobId,
+    ADMIN_ID,
+  ]);
+
+  const job = await getJob(jobId);
+  assert.equal(money(job.total_expenses_cents), "42.00");
+  assert.equal(
+    money(job.contractor_pay_cents),
+    "542.00",
+    "the total grows by the reimbursement, while labor stays at 500.00",
+  );
+  assert.equal(money(job.contractor_labor_pay_cents), "500.00");
+});
+
+test("expenses cannot be revised after a job has been paid", async () => {
   const { jobId, tokens } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
   await query("select * from public.accept_job_offer($1)", [sha256(tokens[CONTRACTOR.marcus])]);
   await query("select public.contractor_start_work($1, $2)", [jobId, CONTRACTOR.marcus]);
   await query("select public.contractor_submit_completion($1, $2, $3, $4)", [
     jobId,
-    "Work finished and ticketed.",
-    "FT-PAY-001",
+    "Done.",
+    "FT-PAID-1",
     CONTRACTOR.marcus,
   ]);
   await query("select public.admin_approve_job($1, $2)", [jobId, ADMIN_ID]);
-
-  const job = await getJob(jobId);
-  assert.ok(job.scheduled_pay_date, "approval should schedule a pay date");
-
-  const [{ d }] = await query("select public.next_friday(current_date)::text as d");
-  assert.equal(job.scheduled_pay_date.toISOString().slice(0, 10), d);
-
-  // And the ticket reference is what an admin reconciles against.
-  assert.equal(job.field_ticket_ref, "FT-PAY-001");
-});
-
-/** Take a job all the way to approved, ready to be paid. */
-async function approvedJob(contractorId = CONTRACTOR.marcus, payCents = 40000) {
-  const { jobId, tokens } = await createOfferedJob({
-    contractorIds: [contractorId],
-    payCents,
-  });
-  await query("select * from public.accept_job_offer($1)", [sha256(tokens[contractorId])]);
-  await query("select public.contractor_start_work($1, $2)", [jobId, contractorId]);
-  await query("select public.contractor_submit_completion($1, $2, $3, $4)", [
-    jobId,
-    "Done.",
-    `FT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-    contractorId,
-  ]);
-  await query("select public.admin_approve_job($1, $2)", [jobId, ADMIN_ID]);
-  return jobId;
-}
-
-test("a payment run marks every selected job paid in one go", async () => {
-  const a = await approvedJob(CONTRACTOR.marcus, 40000);
-  const b = await approvedJob(CONTRACTOR.dana, 55000);
-
-  const [{ admin_mark_paid_batch: count }] = await query(
-    "select public.admin_mark_paid_batch($1::uuid[], $2, $3, $4)",
-    [[a, b], "ACH-2026-0424", "ACH", ADMIN_ID],
-  );
-
-  assert.equal(count, 2);
-
-  for (const id of [a, b]) {
-    const job = await getJob(id);
-    assert.equal(job.status, "paid");
-    assert.equal(job.payment_reference, "ACH-2026-0424");
-    assert.ok(job.paid_at);
-  }
-});
-
-test("a payment run is all-or-nothing", async () => {
-  const good = await approvedJob(CONTRACTOR.marcus, 30000);
-  const { jobId: notApproved } = await createOfferedJob({ contractorIds: [CONTRACTOR.priya] });
+  await query("select public.admin_mark_paid($1, $2, $3, $4)", [jobId, "ACH-1", "ACH", ADMIN_ID]);
 
   await assert.rejects(
-    query("select public.admin_mark_paid_batch($1::uuid[], $2, $3, $4)", [
-      [good, notApproved],
-      "ACH-BAD",
-      "ACH",
-      ADMIN_ID,
-    ]),
-    /not approved/i,
+    query("select public.admin_approve_expenses($1, 9999, 0, 0, 0, $2)", [jobId, ADMIN_ID]),
+    /after a job has been paid/i,
   );
-
-  // The good job must not have been paid by the half-completed run.
-  assert.equal((await getJob(good)).status, "approved");
-});
-
-test("a payment run records the batch in the audit log", async () => {
-  const id = await approvedJob(CONTRACTOR.marcus, 21000);
-  await query("select public.admin_mark_paid_batch($1::uuid[], $2, $3, $4)", [
-    [id],
-    "ACH-AUDIT-1",
-    "ACH",
-    ADMIN_ID,
-  ]);
-
-  const [entry] = await query(
-    `select detail from public.audit_log
-      where action = 'payment_run.recorded' and detail->>'reference' = 'ACH-AUDIT-1'`,
-  );
-  assert.ok(entry, "the run should be logged");
-  assert.equal(entry.detail.jobs, 1);
-});
-
-test("paying does not alter the amount the contractor accepted", async () => {
-  const id = await approvedJob(CONTRACTOR.marcus, 47250);
-  await query("select public.admin_mark_paid_batch($1::uuid[], $2, $3, $4)", [
-    [id],
-    "ACH-FIXED",
-    "ACH",
-    ADMIN_ID,
-  ]);
-  assert.equal((await getJob(id)).contractor_pay_cents, 47250);
 });
 
 // ---------------------------------------------------------------------------
-// Visibility
+// What a contractor may and may not see
 // ---------------------------------------------------------------------------
 
-test("a contractor can read the price list and their own job's breakdown", async () => {
-  const { asUser } = await import("./helpers/db.mjs");
+test("a contractor cannot read the customer price or the Mall Consultants share", async () => {
+  // A priced job, offered to Marcus, so he can see the job itself.
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
+  await query("update public.jobs set status = 'offered' where id = $1", [jobId]);
+  await query(
+    `insert into public.job_offers (job_id, contractor_id, round, status, token_hash, expires_at)
+     values ($1, $2, 1, 'delivered', $3, now() + interval '4 hours')`,
+    [jobId, CONTRACTOR.marcus, sha256(`vis-${crypto.randomUUID()}`)],
+  );
 
+  // He can see the job.
+  const visible = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select id from public.jobs where id = $1", [jobId]).then((r) => r.rows),
+  );
+  assert.equal(visible.length, 1, "the offer makes the job itself visible");
+
+  // But not a cent of the customer side of it.
   const rows = await asUser(CONTRACTOR.marcus, (c) =>
-    c.query("select id from public.price_list_items").then((r) => r.rows),
+    c.query("select * from public.job_pricing where job_id = $1", [jobId]).then((r) => r.rows),
   );
-  assert.ok(rows.length > 0, "the price list is what a contractor is paid from");
+  assert.equal(rows.length, 0, "job_pricing has no contractor-facing policy at all");
+
+  const fin = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select * from public.job_financials where job_id = $1", [jobId]).then((r) => r.rows),
+  );
+  assert.equal(fin.length, 0, "the financial view must not become a way around that");
 });
 
-test("a contractor cannot see line items for a job that is not theirs", async () => {
-  const { asUser } = await import("./helpers/db.mjs");
-
-  const jobId = await createDraftJob();
-  await addLine(jobId, await priceItem("SSDC-SWAP"), 1);
+test("a contractor can read their own pay, mileage and expenses", async () => {
+  const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
 
   const rows = await asUser(CONTRACTOR.marcus, (c) =>
     c
-      .query("select id from public.job_line_items where job_id = $1", [jobId])
+      .query(
+        `select contractor_labor_pay_cents, mileage_payment_cents,
+                total_expenses_cents, contractor_pay_cents
+           from public.jobs where id = $1`,
+        [jobId],
+      )
       .then((r) => r.rows),
   );
-  assert.equal(rows.length, 0);
+
+  assert.equal(rows.length, 1);
+  assert.equal(money(rows[0].contractor_labor_pay_cents), "500.00");
 });
 
-test("a contractor cannot edit the price list", async () => {
-  const { asUser } = await import("./helpers/db.mjs");
+test("an administrator sees the full financial breakdown", async () => {
+  const jobId = await createPricedJob({ customerPriceCents: 12000 });
 
+  const rows = await asUser(ADMIN_ID, (c) =>
+    c.query("select * from public.job_financials where job_id = $1", [jobId]).then((r) => r.rows),
+  );
+
+  assert.equal(rows.length, 1);
+  const fin = rows[0];
+  assert.equal(money(fin.customer_labor_price_cents), "120.00");
+  assert.equal(money(fin.total_labor_revenue_cents), "120.00");
+  assert.equal(money(fin.contractor_labor_pay_cents), "54.00");
+  assert.equal(money(fin.mall_share_cents), "66.00");
+  assert.equal(money(fin.mall_consultants_margin_cents), "66.00");
+});
+
+test("a contractor cannot read the split percentage or the mileage rate setting", async () => {
+  const rows = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select key, value from public.app_settings").then((r) => r.rows),
+  );
+  assert.equal(
+    rows.length,
+    0,
+    "knowing the percentage would let a contractor derive the customer price",
+  );
+});
+
+test("a contractor cannot change the settings", async () => {
   const changed = await asUser(CONTRACTOR.marcus, (c) =>
     c
-      .query("update public.price_list_items set unit_price_cents = 999999")
+      .query("update public.app_settings set value = 9000 where key = 'contractor_percentage_bps'")
       .then((r) => r.rowCount),
   );
   assert.equal(changed, 0);
 });
 
-test("install requests are invisible to contractors", async () => {
-  const { asUser } = await import("./helpers/db.mjs");
+// ---------------------------------------------------------------------------
+// Catalogue
+// ---------------------------------------------------------------------------
 
-  await query(
-    "insert into public.install_requests (raw_text, created_by) values ($1, $2)",
-    ["Customer: Acme\nReplace 1 SSDC unit.", ADMIN_ID],
+test("every catalogue price derives a contractor share correctly", async () => {
+  const items = await query(
+    `select code, customer_labor_price_cents, contractor_percentage_bps,
+            contractor_labor_pay_cents, mall_share_cents
+       from public.price_list_items where is_active`,
   );
 
-  const rows = await asUser(CONTRACTOR.marcus, (c) =>
-    c.query("select id from public.install_requests").then((r) => r.rows),
-  );
-  assert.equal(rows.length, 0);
+  assert.ok(items.length > 100, `expected the full catalogue, saw ${items.length}`);
 
-  const asAdmin = await asUser(ADMIN_ID, (c) =>
-    c.query("select id from public.install_requests").then((r) => r.rows),
+  for (const item of items) {
+    assert.equal(
+      item.contractor_labor_pay_cents + item.mall_share_cents,
+      item.customer_labor_price_cents,
+      `${item.code} must reconcile`,
+    );
+    assert.equal(
+      item.contractor_labor_pay_cents,
+      Math.round((item.customer_labor_price_cents * item.contractor_percentage_bps) / 10000),
+      `${item.code} contractor share`,
+    );
+  }
+});
+
+test("negative catalogue prices are refused", async () => {
+  await assert.rejects(
+    query(
+      `insert into public.price_list_items (code, name, customer_labor_price_cents)
+       values ('BAD-NEGATIVE', 'Bad', -100)`,
+    ),
+    /customer_labor_price_cents/i,
   );
-  assert.ok(asAdmin.length > 0, "an administrator should see intake");
+});
+
+test("the catalogue keeps the zone install programs", async () => {
+  const [row] = await query(
+    "select count(*)::int as n from public.price_list_items where category = 'Zone Install Program'",
+  );
+  assert.ok(row.n >= 30, `expected the zone program list, saw ${row.n}`);
 });
 
 test.after(async () => {

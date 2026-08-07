@@ -10,7 +10,7 @@ import {
 } from "@/lib/format";
 import { signAttachments } from "@/lib/storage";
 import { createClient } from "@/lib/supabase/server";
-import type { Job, JobAttachment, JobLineItem } from "@/lib/types";
+import type { Job, JobAttachment } from "@/lib/types";
 import { WorkPanel } from "./work-panel";
 
 export const dynamic = "force-dynamic";
@@ -36,13 +36,13 @@ export default async function ContractorJobDetail({
   if (!job) notFound();
   if (job.assigned_contractor_id !== user.id) notFound();
 
-  const [{ data: attachmentRows }, { data: lineItemRows }] = await Promise.all([
-    supabase.from("job_attachments").select("*").eq("job_id", id).order("created_at"),
-    supabase.from("job_line_items").select("*").eq("job_id", id).order("sort_order"),
-  ]);
+  const { data: attachmentRows } = await supabase
+    .from("job_attachments")
+    .select("*")
+    .eq("job_id", id)
+    .order("created_at");
 
   const attachments = (attachmentRows ?? []) as JobAttachment[];
-  const lineItems = (lineItemRows ?? []) as JobLineItem[];
   const photos = await signAttachments(
     attachments.filter((a) => a.kind === "before" || a.kind === "after"),
   );
@@ -75,28 +75,35 @@ export default async function ContractorJobDetail({
             {formatMoney(job.contractor_pay_cents, job.currency)}
           </p>
 
-          {/* The breakdown, so a contractor can see how the figure was reached
-              rather than being handed a number to take on trust. */}
-          {lineItems.length > 0 ? (
-            <ul className="mt-3 space-y-1 border-t border-slate-100 pt-3">
-              {lineItems.map((li) => (
-                <li key={li.id} className="flex justify-between gap-3 text-xs text-slate-600">
-                  <span className="min-w-0">
-                    {li.description}
-                    {li.quantity !== 1 ? (
-                      <span className="text-slate-400">
-                        {" "}
-                        × {li.quantity} {li.unit}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="shrink-0 tabular-nums">
-                    {formatMoney(li.line_total_cents, job.currency)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          {/* The breakdown of their own payment. The customer price and the
+              Mall Consultants share are not on this table at all. */}
+          <ul className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs">
+            <li className="flex justify-between gap-3 text-slate-600">
+              <span>Labor</span>
+              <span className="tabular-nums">
+                {formatMoney(job.contractor_labor_pay_cents, job.currency)}
+              </span>
+            </li>
+            {job.mileage_payment_cents > 0 ? (
+              <li className="flex justify-between gap-3 text-slate-600">
+                <span>
+                  Mileage — {Number(job.payable_miles)} payable miles at $
+                  {Number(job.mileage_rate).toFixed(3)}
+                </span>
+                <span className="tabular-nums">
+                  {formatMoney(job.mileage_payment_cents, job.currency)}
+                </span>
+              </li>
+            ) : null}
+            {job.total_expenses_cents > 0 ? (
+              <li className="flex justify-between gap-3 text-slate-600">
+                <span>Approved expenses</span>
+                <span className="tabular-nums">
+                  {formatMoney(job.total_expenses_cents, job.currency)}
+                </span>
+              </li>
+            ) : null}
+          </ul>
 
           <p className="mt-3 text-xs text-slate-500">
             Fixed for this job. Payments are processed every Friday.

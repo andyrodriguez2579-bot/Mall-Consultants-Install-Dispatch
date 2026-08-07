@@ -8,7 +8,11 @@ import { appBaseUrl } from "@/lib/env";
 import { sendSms, templates } from "@/lib/sms";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { lineItemsTotal, readLineItems, readWorkOrderFields } from "@/lib/line-items";
+import {
+  readPricingForm,
+  upsertJobPricing,
+  validatePricing,
+} from "@/lib/pricing-form";
 import type { Job, Profile } from "@/lib/types";
 import {
   dispatchSchema,
@@ -18,6 +22,21 @@ import {
   readMulti,
   reworkSchema,
 } from "@/lib/validation";
+
+/** Work order fields withheld from a contractor until the job is theirs. */
+function readWorkOrderFields(formData: FormData) {
+  const text = (name: string) => {
+    const value = formData.get(name);
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  };
+  return {
+    site_contact_name: text("site_contact_name"),
+    site_contact_phone: text("site_contact_phone"),
+    access_notes: text("access_notes"),
+    customer_reference: text("customer_reference"),
+    account_number: text("account_number"),
+  };
+}
 
 export interface FormState {
   errors?: Record<string, string>;
@@ -52,18 +71,11 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
 
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
 
-  const lineItems = readLineItems(formData);
-  const usesLineItems = lineItems.length > 0;
+  const pricing = readPricingForm(formData);
+  const pricingErrors = validatePricing(pricing);
+  if (pricingErrors) return { errors: pricingErrors };
 
-  const { skill_ids, contractor_pay, ...fields } = parsed.data;
-
-  if (!usesLineItems && contractor_pay <= 0) {
-    return {
-      errors: {
-        contractor_pay: "Add priced work items, or set a contractor payment directly.",
-      },
-    };
-  }
+  const { skill_ids, contractor_pay: _ignored, ...fields } = parsed.data;
 
   const supabase = await createClient();
 
@@ -75,11 +87,7 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
     .insert({
       ...fields,
       ...readWorkOrderFields(formData),
-      // When there are line items the database trigger recomputes this from
-      // them the moment they are inserted; seeding it keeps the row consistent
-      // in between.
-      contractor_pay_cents: usesLineItems ? lineItemsTotal(lineItems) : contractor_pay,
-      pay_source: usesLineItems ? "line_items" : "manual",
+      ...pricing.jobFields,
       status,
       created_by: admin.id,
     })
@@ -90,12 +98,10 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
     return { error: error?.message ?? "Could not create the job." };
   }
 
-  if (usesLineItems) {
-    const { error: lineError } = await supabase
-      .from("job_line_items")
-      .insert(lineItems.map((li) => ({ ...li, job_id: job.id })));
-    if (lineError) return { error: lineError.message };
-  }
+  // The customer side lands in job_pricing, which contractors cannot read.
+  // A trigger mirrors the derived labor pay back onto the job.
+  const { error: pricingError } = await upsertJobPricing(supabase, job.id, pricing, admin.id);
+  if (pricingError) return { error: pricingError };
 
   if (skill_ids.length > 0) {
     await supabase
@@ -108,65 +114,53 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
 }
 
 export async function updateJob(_prev: FormState, formData: FormData): Promise<FormState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const jobId = formData.get("job_id");
   if (typeof jobId !== "string") return { error: "Missing job." };
 
   const parsed = parseJobForm(formData);
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
 
-  const { skill_ids, contractor_pay, ...fields } = parsed.data;
+  const { skill_ids, contractor_pay: _unused, ...fields } = parsed.data;
   const supabase = await createClient();
 
   const { data: existing } = await supabase
     .from("jobs")
-    .select("status, contractor_pay_cents, pay_source")
+    .select("status")
     .eq("id", jobId)
-    .single<Pick<Job, "status" | "contractor_pay_cents" | "pay_source">>();
+    .single<Pick<Job, "status">>();
 
   if (!existing) return { error: "Job not found." };
 
   const editable = existing.status === "draft" || existing.status === "ready";
-  const lineItems = readLineItems(formData);
-  const usesLineItems = lineItems.length > 0;
-  const newTotal = usesLineItems ? lineItemsTotal(lineItems) : contractor_pay;
-  const payChanged = existing.contractor_pay_cents !== newTotal;
+  const pricing = readPricingForm(formData);
+  const pricingErrors = validatePricing(pricing);
+  if (pricingErrors) return { errors: pricingErrors };
 
-  // The database refuses this too; catching it here produces a better sentence.
-  if (payChanged && !editable) {
-    return {
-      errors: {
-        contractor_pay:
-          "Pay is fixed once a job has been dispatched. Cancel and repost to change it.",
-      },
-    };
-  }
-
+  // Mileage and reimbursables stay editable after dispatch -- they are only
+  // knowable after the trip, and sit outside the labor agreement. The customer
+  // pricing does not, and the database refuses it independently of this check.
   const { error } = await supabase
     .from("jobs")
     .update({
       ...fields,
       ...readWorkOrderFields(formData),
-      ...(editable
-        ? {
-            contractor_pay_cents: newTotal,
-            pay_source: usesLineItems ? "line_items" : "manual",
-          }
-        : {}),
+      ...pricing.jobFields,
+      ...(editable ? {} : { service_item_id: undefined, service_type: undefined }),
     })
     .eq("id", jobId);
 
   if (error) return { error: error.message };
 
-  // Line items are replaced wholesale, and only while the job is still
-  // editable -- the database trigger refuses them otherwise.
   if (editable) {
-    await supabase.from("job_line_items").delete().eq("job_id", jobId);
-    if (usesLineItems) {
-      const { error: lineError } = await supabase
-        .from("job_line_items")
-        .insert(lineItems.map((li) => ({ ...li, job_id: jobId })));
-      if (lineError) return { error: lineError.message };
+    const { error: pricingError } = await upsertJobPricing(supabase, jobId, pricing, admin.id);
+    if (pricingError) {
+      return {
+        errors: {
+          customer_labor_price:
+            "Pricing is fixed once a job has been dispatched. Cancel and repost to change it.",
+        },
+      };
     }
   }
 
@@ -214,8 +208,10 @@ export async function duplicateJob(formData: FormData): Promise<void> {
       postal_code: source.postal_code,
       scope: source.scope,
       instructions: source.instructions,
-      contractor_pay_cents: source.contractor_pay_cents,
       currency: source.currency,
+      service_item_id: source.service_item_id,
+      service_type: source.service_type,
+      mileage_rate: source.mileage_rate,
       status: "draft",
       created_by: admin.id,
     })
@@ -223,6 +219,21 @@ export async function duplicateJob(formData: FormData): Promise<void> {
     .single<Pick<Job, "id">>();
 
   if (!copy) return;
+
+  // Carry the pricing across too, or the copy would be a free job.
+  const { data: sourcePricing } = await supabase
+    .from("job_pricing")
+    .select("customer_labor_price_cents, task_count, contractor_percentage_bps")
+    .eq("job_id", jobId)
+    .maybeSingle<{
+      customer_labor_price_cents: number;
+      task_count: number;
+      contractor_percentage_bps: number;
+    }>();
+
+  if (sourcePricing) {
+    await supabase.from("job_pricing").insert({ job_id: copy.id, ...sourcePricing });
+  }
 
   const { data: skills } = await supabase
     .from("job_skills")

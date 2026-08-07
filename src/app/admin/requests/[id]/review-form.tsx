@@ -10,7 +10,7 @@ import {
   buttonClass,
   inputClass,
 } from "@/components/ui";
-import { LineItemEditor, type EditableLineItem } from "@/components/line-item-editor";
+import { PricingPanel } from "@/components/pricing-panel";
 import type { ExtractedField, ParsedRequest } from "@/lib/intake/parse";
 import type { PriceListItem, Skill } from "@/lib/types";
 import {
@@ -79,26 +79,11 @@ export function ReviewForm({
   const [state, action] = useActionState(convertRequestToJob, EMPTY);
   const err = state.errors ?? {};
 
-  // Turn the parser's suggestions into editable rows, pricing each from the
-  // catalogue. Anything the parser proposed that is no longer in the price list
-  // is simply dropped.
-  const initialItems: EditableLineItem[] = (parsed?.suggestedItems ?? []).flatMap(
-    (suggestion) => {
-      const source = priceList.find((p) => p.code === suggestion.code);
-      if (!source) return [];
-      return [
-        {
-          key: `${suggestion.code}-${source.id}`,
-          price_list_item_id: source.id,
-          code: source.code,
-          description: source.name,
-          unit: source.unit,
-          unit_price_cents: source.unit_price_cents,
-          quantity: suggestion.quantity,
-        },
-      ];
-    },
-  );
+  // The parser's first suggestion, if any, seeds the service and its price.
+  const firstSuggestion = (parsed?.suggestedItems ?? [])[0];
+  const suggested = firstSuggestion
+    ? priceList.find((p) => p.code === firstSuggestion.code)
+    : undefined;
 
   return (
     <div className="space-y-4">
@@ -228,20 +213,17 @@ export function ReviewForm({
           </div>
         </Card>
 
-        <Card>
-          <CardHeader
-            title="Work items and contractor pay"
-            description="Priced from the price list. Adjust quantities or add lines as needed."
-          />
-          <div className="p-4 sm:p-5">
-            <LineItemEditor priceList={priceList} initialItems={initialItems} />
-            {err.contractor_pay ? (
-              <p className="mt-2 text-xs text-rose-600">{err.contractor_pay}</p>
-            ) : null}
-            {/* Only used when no line items are present. */}
-            <input type="hidden" name="contractor_pay" value="0" />
-          </div>
-        </Card>
+        <PricingPanel
+          priceList={priceList}
+          defaults={{
+            serviceItemId: suggested?.id ?? null,
+            customerLaborPriceCents: suggested?.customer_labor_price_cents,
+            taskCount: firstSuggestion?.quantity ?? 1,
+          }}
+        />
+        {err.customer_labor_price ? (
+          <p className="text-xs text-rose-600">{err.customer_labor_price}</p>
+        ) : null}
 
         <Card>
           <CardHeader title="Schedule and certifications" />

@@ -93,7 +93,10 @@ test("a contractor cannot update a job directly", async () => {
 test("a contractor cannot repoint a job's pay", async () => {
   const changed = await asUser(CONTRACTOR.marcus, (c) =>
     c
-      .query("update public.jobs set contractor_pay_cents = 999999 where id = $1", [SEED_ASSIGNED_JOB])
+      .query(
+        "update public.jobs set contractor_labor_pay_cents = 999999 where id = $1",
+        [SEED_ASSIGNED_JOB],
+      )
       .then((r) => r.rowCount),
   );
   assert.equal(changed, 0);
@@ -305,28 +308,40 @@ test("the audit log cannot be updated or deleted, even by the table owner", asyn
   );
 });
 
-test("contractor pay is frozen once a job has been dispatched", async () => {
+test("contractor labor pay is frozen once a job has been dispatched", async () => {
   const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
 
   await assert.rejects(
-    query("update public.jobs set contractor_pay_cents = 1 where id = $1", [jobId]),
-    /pay is fixed/i,
+    query("update public.jobs set contractor_labor_pay_cents = 1 where id = $1", [jobId]),
+    /labor pay is fixed/i,
     "repricing a dispatched job must be refused at the database level",
   );
 
   const job = await getJob(jobId);
-  assert.equal(job.contractor_pay_cents, 50000);
+  assert.equal(job.contractor_labor_pay_cents, 50000);
 });
 
-test("contractor pay is still editable while a job is a draft", async () => {
+test("the mileage rate is frozen once a job has been dispatched", async () => {
+  const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
+  await assert.rejects(
+    query("update public.jobs set mileage_rate = 2.50 where id = $1", [jobId]),
+    /mileage rate is fixed/i,
+  );
+});
+
+test("contractor labor pay is still editable while a job is a draft", async () => {
   const { jobId } = await createOfferedJob({
     contractorIds: [CONTRACTOR.marcus],
     status: "draft",
   });
-  await query("update public.jobs set contractor_pay_cents = 61000 where id = $1", [jobId]);
+  await query(
+    "update public.jobs set contractor_labor_pay_cents = 61000 where id = $1",
+    [jobId],
+  );
 
   const job = await getJob(jobId);
-  assert.equal(job.contractor_pay_cents, 61000);
+  assert.equal(job.contractor_labor_pay_cents, 61000);
+  assert.equal(job.contractor_pay_cents, 61000, "the total follows the labor figure");
 });
 
 test("a job number cannot be rewritten", async () => {

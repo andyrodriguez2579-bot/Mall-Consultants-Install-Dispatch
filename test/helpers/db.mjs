@@ -83,10 +83,13 @@ export async function createOfferedJob({
   status = "offered",
   title = "Concurrency fixture job",
 } = {}) {
+  // `payCents` is the contractor's LABOR pay. The job's total
+  // (contractor_pay_cents) is derived from it by trigger, adding mileage and
+  // reimbursable expenses, both of which start at zero here.
   const [job] = await query(
     `insert into public.jobs (
        status, title, customer_name, address_line1, city, state_code, postal_code,
-       scope, contractor_pay_cents, offer_expires_at, offer_round, created_by
+       scope, contractor_labor_pay_cents, offer_expires_at, offer_round, created_by
      ) values (
        $1, $2, 'Fixture Customer', '1 Test Way', 'Houston', 'TX', '77002',
        'Fixture scope', $3, now() + ($4 || ' hours')::interval, 1, $5

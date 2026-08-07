@@ -11,7 +11,7 @@ import {
   buttonClass,
   inputClass,
 } from "@/components/ui";
-import { LineItemEditor, type EditableLineItem } from "@/components/line-item-editor";
+import { PricingPanel, type PricingDefaults } from "@/components/pricing-panel";
 import type { Job, PriceListItem, Skill } from "@/lib/types";
 import { type FormState, createJob, updateJob } from "./actions";
 
@@ -66,13 +66,15 @@ export function JobForm({
   priceList,
   job,
   selectedSkillIds = [],
-  initialLineItems = [],
+  pricingDefaults,
+  commuterMiles = 30,
 }: {
   skills: Skill[];
   priceList: PriceListItem[];
   job?: Job;
   selectedSkillIds?: string[];
-  initialLineItems?: EditableLineItem[];
+  pricingDefaults?: PricingDefaults;
+  commuterMiles?: number;
 }) {
   const isEdit = Boolean(job);
   const [state, action] = useActionState(isEdit ? updateJob : createJob, EMPTY);
@@ -257,53 +259,22 @@ export function JobForm({
               className={inputClass}
             />
           </Field>
+          <Field label="Account number" error={err.account_number}>
+            <input
+              name="account_number"
+              defaultValue={job?.account_number ?? ""}
+              className={inputClass}
+            />
+          </Field>
         </div>
       </Card>
 
-      <Card>
-        <CardHeader
-          title="Work items and contractor pay"
-          description={
-            payLocked
-              ? "Locked — this job has been dispatched, so the pay a contractor accepted cannot move."
-              : "Priced from the price list. The contractor payment is the sum of these."
-          }
-        />
-        <div className="space-y-4 p-4 sm:p-5">
-          <LineItemEditor
-            priceList={priceList}
-            initialItems={initialLineItems}
-            disabled={payLocked}
-          />
-
-          <div className="border-t border-slate-200 pt-4">
-            <Field
-              label="Or set a flat amount (USD)"
-              error={err.contractor_pay}
-              hint={
-                payLocked
-                  ? "Locked — already dispatched."
-                  : "Used only when there are no work items above."
-              }
-            >
-              <input
-                name="contractor_pay"
-                defaultValue={
-                  job && job.pay_source === "manual"
-                    ? (job.contractor_pay_cents / 100).toFixed(2)
-                    : "0"
-                }
-                readOnly={payLocked}
-                inputMode="decimal"
-                placeholder="850.00"
-                className={
-                  inputClass + " w-40" + (payLocked ? " bg-slate-100 text-slate-500" : "")
-                }
-              />
-            </Field>
-          </div>
-        </div>
-      </Card>
+      <PricingPanel
+        priceList={priceList}
+        defaults={pricingDefaults}
+        commuterMiles={commuterMiles}
+        disabled={payLocked}
+      />
 
       <Card>
         <CardHeader title="Schedule" />
