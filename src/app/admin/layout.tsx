@@ -5,8 +5,11 @@ import { signOut } from "@/app/sign-in/actions";
 
 const NAV = [
   { href: "/admin", label: "Dashboard" },
+  { href: "/admin/requests", label: "Requests" },
   { href: "/admin/jobs", label: "Jobs" },
+  { href: "/admin/payments", label: "Payments" },
   { href: "/admin/contractors", label: "Contractors" },
+  { href: "/admin/price-list", label: "Price list" },
   { href: "/admin/messages", label: "Messages" },
   { href: "/admin/activity", label: "Activity" },
 ];

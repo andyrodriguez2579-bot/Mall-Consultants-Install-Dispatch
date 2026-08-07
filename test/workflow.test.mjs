@@ -56,9 +56,10 @@ test("a job runs the full lifecycle from dispatch to payment", async () => {
 
   // 3. Evidence, then submission.
   await addAfterPhoto(jobId, CONTRACTOR.marcus);
-  await query("select public.contractor_submit_completion($1, $2, $3)", [
+  await query("select public.contractor_submit_completion($1, $2, $3, $4)", [
     jobId,
     "Replaced the controller board and re-commissioned against the BMS.",
+    "FT-2026-4417",
     CONTRACTOR.marcus,
   ]);
   job = await getJob(jobId);
@@ -100,9 +101,10 @@ test("the rework loop returns a job to the contractor and back", async () => {
   await query("select * from public.accept_job_offer($1)", [sha256(tokens[CONTRACTOR.marcus])]);
   await query("select public.contractor_start_work($1, $2)", [jobId, CONTRACTOR.marcus]);
   await addAfterPhoto(jobId, CONTRACTOR.marcus);
-  await query("select public.contractor_submit_completion($1, $2, $3)", [
+  await query("select public.contractor_submit_completion($1, $2, $3, $4)", [
     jobId,
     "Initial submission.",
+    "FT-2026-4418",
     CONTRACTOR.marcus,
   ]);
 
@@ -118,9 +120,10 @@ test("the rework loop returns a job to the contractor and back", async () => {
   assert.match(job.rework_notes, /out of focus/);
 
   // The contractor can resubmit straight from needs_rework.
-  await query("select public.contractor_submit_completion($1, $2, $3)", [
+  await query("select public.contractor_submit_completion($1, $2, $3, $4)", [
     jobId,
-    "Retook the north unit photo in better light.",
+    "Corrected the item flagged on review and re-ticketed.",
+    "FT-2026-4418R",
     CONTRACTOR.marcus,
   ]);
   job = await getJob(jobId);
@@ -317,9 +320,10 @@ test("pay stays fixed across the entire lifecycle", async () => {
   }
 
   await addAfterPhoto(jobId, CONTRACTOR.marcus);
-  await query("select public.contractor_submit_completion($1, $2, $3)", [
+  await query("select public.contractor_submit_completion($1, $2, $3, $4)", [
     jobId,
     "Done.",
+    "FT-2026-4419",
     CONTRACTOR.marcus,
   ]);
   await query("select public.admin_approve_job($1, $2)", [jobId, ADMIN_ID]);
@@ -338,7 +342,11 @@ test("a contractor cannot submit completion for someone else's job", async () =>
 
   await assert.rejects(
     asUser(CONTRACTOR.dana, (c) =>
-      c.query("select public.contractor_submit_completion($1, $2)", [jobId, "I did this one."]),
+      c.query("select public.contractor_submit_completion($1, $2, $3)", [
+        jobId,
+        "I did this one.",
+        "FT-9999",
+      ]),
     ),
     /not assigned to you/i,
   );

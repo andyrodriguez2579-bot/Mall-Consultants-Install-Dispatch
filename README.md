@@ -2,11 +2,13 @@
 
 Private job-dispatch system for SSDC installations and other field work.
 
-An administrator posts a job with a defined scope and a fixed contractor
-payment. Eligible approved contractors are texted a secure link and can accept
-or pass. **The first eligible contractor to accept is assigned the job** — and
-exactly one can win, guaranteed at the database level. The job is then tracked
-through installation, completion review, and payment.
+An install request arrives as free text. It is extracted into a draft job,
+priced from a contractor price list, and dispatched to eligible approved
+contractors by SMS. **The first eligible contractor to accept is assigned the
+job** — and exactly one can win, guaranteed at the database level. On
+acceptance the full work order is released. The contractor completes the work,
+records the field ticket number from the existing ticket app, and the job is
+approved and scheduled into the next Friday payment run.
 
 ---
 
@@ -36,10 +38,14 @@ sequenceDiagram
     participant C1 as Contractor A
     participant C2 as Contractor B
 
-    A->>S: Post job (scope, location, fixed pay, required skills)
+    A->>S: Paste install request as received
+    S-->>A: Extracted draft + suggested work items
+    A->>S: Correct, price from the price list, save
     A->>S: Select contractors, open dispatch round
     S-->>C1: SMS with a link unique to Contractor A
     S-->>C2: SMS with a link unique to Contractor B
+
+    Note over C1,C2: Offer shows scope, approximate<br/>location and the fixed pay only
 
     par Both tap at once
         C1->>S: Accept
@@ -47,17 +53,28 @@ sequenceDiagram
         C2->>S: Accept
     end
 
-    S-->>C1: "This job is yours"
+    S-->>C1: "Job is yours" + full work order
     S-->>C2: "Job already filled"
     S-->>A: "Contractor A accepted MID-2026-1003"
 
     C1->>S: Confirm arrival, start work
-    C1->>S: Upload before/after photos + notes
-    C1->>S: Mark complete
-    A->>S: Review evidence, approve
-    A->>S: Record payment (fixed amount)
+    C1->>S: Field ticket number + completion notes
+    A->>S: Reconcile against the ticket app, approve
+    S-->>C1: "Approved — payment Friday 24 Apr"
+    A->>S: Record Friday payment run
     S-->>C1: "Payment sent"
 ```
+
+### The four things this system is responsible for
+
+| | |
+| --- | --- |
+| **Intake** | Turn a pasted request into a priced, dispatchable job |
+| **Dispatch** | Broadcast it and produce exactly one assignee |
+| **Release** | Hand the winner the full work order, and nobody else |
+| **Payment tracking** | Know what is owed to whom, and on which Friday |
+
+Invoicing the customer, and moving the money, both happen outside this system.
 
 ### Job statuses
 
@@ -130,9 +147,40 @@ test/
 
 ---
 
+## Intake and pricing
+
+**Intake.** Paste the request into Admin → Requests exactly as it arrived. The
+parser reads labelled fields ("Customer:", "PO#:", "Date:"), and falls back to
+shape — a US address, a phone number, a ZIP — when a request is loose prose. It
+then matches the text against the price list to suggest work items and
+quantities, so "replace 2 SSDC units" arrives pre-priced.
+
+Two rules govern it:
+
+- **It never guesses silently.** Every extracted value carries the text it came
+  from, and the review screen marks whether it was *read from the request* or
+  *inferred*. Anything it could not fill is listed explicitly.
+- **The raw text is kept verbatim.** When a job is disputed, the original
+  request is the record of what was actually asked for.
+
+This is deliberately not an LLM call — it runs on every paste, needs no API key,
+and fails predictably. Messy prose will defeat it, which is exactly why the
+output is a draft for review rather than a finished job. If you would rather it
+handled arbitrary prose, the swap point is one function:
+`parseInstallRequest()` in `src/lib/intake/parse.ts`.
+
+**Pricing.** A job's contractor payment is normally built from the price list:
+pick work items and quantities, and the total follows. Each line keeps its own
+copy of the description and rate, so **re-pricing the catalogue never changes a
+job that has already been offered or paid**. An unusual job can be priced by
+hand, but that is an explicit override requiring a reason, and it is logged.
+
+Once a job is dispatched, both the total and its work items are frozen by
+database trigger.
+
 ## Data model
 
-Fifteen tables. The ones that carry the most weight:
+Nineteen tables. The ones that carry the most weight:
 
 **`jobs`** — everything about a job, including its fixed
 `contractor_pay_cents`, its schedule, its assignee, and the timestamps for
@@ -152,10 +200,18 @@ by a code path that forgets to log.
 **`sms_messages`** — every outbound message, written *before* the provider is
 called, so a crash mid-send still leaves evidence.
 
+**`job_line_items`** — the priced work making up a job. Carries its own
+description and unit price rather than pointing at the catalogue, and the job's
+total is recomputed from it by trigger.
+
+**`install_requests`** — the raw request text, the extraction, and the job it
+became. Admin-only; contractors never see intake.
+
 Supporting: `profiles`, `contractors`, `contractor_notes` (admin-only, split
 into its own table so RLS can hide it), `skills`, `contractor_skills`,
 `job_skills`, `service_areas`, `contractor_service_areas`,
-`contractor_documents`, `job_attachments`, `login_tokens`.
+`contractor_documents`, `job_attachments`, `login_tokens`,
+`price_list_items`.
 
 ---
 
@@ -394,7 +450,7 @@ npm run test:only # run against the current database
 npm run db:psql   # open a psql session against it
 ```
 
-51 tests:
+92 tests:
 
 **Concurrency (7)** — three-way and 16-way simultaneous races; ten consecutive
 races, because a lost update is a timing bug and one clean pass proves little;
@@ -410,10 +466,23 @@ suspended, deactivated, expired, another contractor's link); audit-log
 immutability; pay immutability after dispatch; job numbers immutable; approval
 and payment ordering enforced.
 
-**Workflow (9)** — the full lifecycle from dispatch through payment; the rework
-loop; the in-app acceptance race; the expiry sweep; re-offering in a second
-round; cancellation closing out live offers; reassignment revoking the previous
-contractor's access; pay staying fixed at every stage.
+**Workflow (10)** — the full lifecycle from dispatch through payment; the
+rework loop; the in-app acceptance race; the expiry sweep; re-offering in a
+second round; cancellation closing out live offers; reassignment revoking the
+previous contractor's access; pay staying fixed at every stage.
+
+**Pricing and payment (23)** — totals following their work items, including
+fractional quantities; re-pricing or retiring a catalogue item leaving existing
+jobs untouched; work items frozen at dispatch; overrides requiring a reason and
+being logged; `next_friday()` across every day of the week; approval scheduling
+a pay date; payment runs being all-or-nothing; intake staying invisible to
+contractors.
+
+**Intake extraction (17)** — structured work orders read field by field; loose
+emails still yielding an address and phone; quantities in digits,
+parentheses and words; specific work items outranking general ones; a street
+number not being mistaken for a quantity; impossible dates left blank rather
+than invented.
 
 The races are genuinely parallel — N independent connections, all warmed
 first so connection setup cannot stagger the calls and quietly serialise the
@@ -459,10 +528,31 @@ an approved but uncertified contractor.
 Worth knowing before this goes near production:
 
 - **Payment is recorded, not processed.** No payment rail is integrated.
-  `admin_mark_paid` writes the ledger entry confirming money was sent by
-  whatever means the business already uses. The amount always comes from the
-  job's frozen pay rather than from operator input, so the register cannot
-  disagree with what the contractor accepted.
+  Recording a Friday run writes the ledger entries and texts each contractor;
+  it does not move money. The amount always comes from the job's frozen pay
+  rather than from operator input, so the register cannot disagree with what
+  the contractor accepted.
+
+- **Proof of completion lives in the other app.** Contractors record the field
+  ticket number here; the ticket itself is the evidence. Photos in this system
+  are optional supporting material. Nothing verifies that a ticket number is
+  real — reconciling it against the ticket app is a human step, which is why
+  the number is shown prominently on the approval screen.
+
+- **Customer pricing is not modelled.** The system tracks only what the
+  contractor is owed, since invoicing happens outside it. If you later want
+  margin per job, the change is a `customer_price_cents` column on `jobs` plus
+  an RLS policy keeping it away from contractors — the pattern already exists
+  for `contractor_notes`.
+
+- **Pay dates are computed in UTC.** `next_friday()` uses the database's
+  timezone, which on Supabase is UTC. A job approved late on a Thursday evening
+  US-time may schedule into the following Friday. Set the database timezone if
+  that matters.
+
+- **Extraction is pattern-based.** It handles labelled work orders well and
+  loose prose adequately. It will not understand an unusual request, and is
+  built to leave fields blank rather than fill them wrongly.
 
 - **Contractors self-report their certifications.** The spec lists skills under
   contractor self-service, so `contractor_skills` is writable by its owner. That

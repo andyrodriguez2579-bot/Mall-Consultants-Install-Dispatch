@@ -8,6 +8,7 @@ import { appBaseUrl } from "@/lib/env";
 import { sendSms, templates } from "@/lib/sms";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { lineItemsTotal, readLineItems, readWorkOrderFields } from "@/lib/line-items";
 import type { Job, Profile } from "@/lib/types";
 import {
   dispatchSchema,
@@ -51,7 +52,19 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
 
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
 
+  const lineItems = readLineItems(formData);
+  const usesLineItems = lineItems.length > 0;
+
   const { skill_ids, contractor_pay, ...fields } = parsed.data;
+
+  if (!usesLineItems && contractor_pay <= 0) {
+    return {
+      errors: {
+        contractor_pay: "Add priced work items, or set a contractor payment directly.",
+      },
+    };
+  }
+
   const supabase = await createClient();
 
   // "Save as draft" vs "Save as ready" -- ready jobs are dispatchable.
@@ -61,7 +74,12 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
     .from("jobs")
     .insert({
       ...fields,
-      contractor_pay_cents: contractor_pay,
+      ...readWorkOrderFields(formData),
+      // When there are line items the database trigger recomputes this from
+      // them the moment they are inserted; seeding it keeps the row consistent
+      // in between.
+      contractor_pay_cents: usesLineItems ? lineItemsTotal(lineItems) : contractor_pay,
+      pay_source: usesLineItems ? "line_items" : "manual",
       status,
       created_by: admin.id,
     })
@@ -70,6 +88,13 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
 
   if (error || !job) {
     return { error: error?.message ?? "Could not create the job." };
+  }
+
+  if (usesLineItems) {
+    const { error: lineError } = await supabase
+      .from("job_line_items")
+      .insert(lineItems.map((li) => ({ ...li, job_id: job.id })));
+    if (lineError) return { error: lineError.message };
   }
 
   if (skill_ids.length > 0) {
@@ -95,14 +120,17 @@ export async function updateJob(_prev: FormState, formData: FormData): Promise<F
 
   const { data: existing } = await supabase
     .from("jobs")
-    .select("status, contractor_pay_cents")
+    .select("status, contractor_pay_cents, pay_source")
     .eq("id", jobId)
-    .single<Pick<Job, "status" | "contractor_pay_cents">>();
+    .single<Pick<Job, "status" | "contractor_pay_cents" | "pay_source">>();
 
   if (!existing) return { error: "Job not found." };
 
   const editable = existing.status === "draft" || existing.status === "ready";
-  const payChanged = existing.contractor_pay_cents !== contractor_pay;
+  const lineItems = readLineItems(formData);
+  const usesLineItems = lineItems.length > 0;
+  const newTotal = usesLineItems ? lineItemsTotal(lineItems) : contractor_pay;
+  const payChanged = existing.contractor_pay_cents !== newTotal;
 
   // The database refuses this too; catching it here produces a better sentence.
   if (payChanged && !editable) {
@@ -118,11 +146,29 @@ export async function updateJob(_prev: FormState, formData: FormData): Promise<F
     .from("jobs")
     .update({
       ...fields,
-      ...(editable ? { contractor_pay_cents: contractor_pay } : {}),
+      ...readWorkOrderFields(formData),
+      ...(editable
+        ? {
+            contractor_pay_cents: newTotal,
+            pay_source: usesLineItems ? "line_items" : "manual",
+          }
+        : {}),
     })
     .eq("id", jobId);
 
   if (error) return { error: error.message };
+
+  // Line items are replaced wholesale, and only while the job is still
+  // editable -- the database trigger refuses them otherwise.
+  if (editable) {
+    await supabase.from("job_line_items").delete().eq("job_id", jobId);
+    if (usesLineItems) {
+      const { error: lineError } = await supabase
+        .from("job_line_items")
+        .insert(lineItems.map((li) => ({ ...li, job_id: jobId })));
+      if (lineError) return { error: lineError.message };
+    }
+  }
 
   // Required skills are replaced wholesale; simpler than diffing and the set
   // is always small.
@@ -258,10 +304,19 @@ export async function approveJob(formData: FormData): Promise<void> {
     const client = createAdminClient();
     const { data: job } = await client
       .from("jobs")
-      .select("job_number, contractor_pay_cents, currency, assigned_contractor_id")
+      .select(
+        "job_number, contractor_pay_cents, currency, assigned_contractor_id, scheduled_pay_date",
+      )
       .eq("id", jobId)
       .single<
-        Pick<Job, "job_number" | "contractor_pay_cents" | "currency" | "assigned_contractor_id">
+        Pick<
+          Job,
+          | "job_number"
+          | "contractor_pay_cents"
+          | "currency"
+          | "assigned_contractor_id"
+          | "scheduled_pay_date"
+        >
       >();
 
     if (job?.assigned_contractor_id) {

@@ -158,6 +158,7 @@ export async function submitCompletion(
   const parsed = completionSchema.safeParse({
     job_id: formData.get("job_id"),
     notes: formData.get("notes"),
+    field_ticket_ref: formData.get("field_ticket_ref"),
   });
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
 
@@ -165,6 +166,7 @@ export async function submitCompletion(
   const { error } = await supabase.rpc("contractor_submit_completion", {
     p_job_id: parsed.data.job_id,
     p_notes: parsed.data.notes,
+    p_field_ticket_ref: parsed.data.field_ticket_ref,
     p_contractor_id: user.id,
   });
 

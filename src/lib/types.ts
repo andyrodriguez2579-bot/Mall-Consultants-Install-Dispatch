@@ -41,6 +41,11 @@ export type AttachmentKind = "brief" | "before" | "after" | "other";
 
 export type SmsStatus = "queued" | "logged" | "sent" | "delivered" | "failed" | "undelivered";
 
+/** How a job's contractor pay was arrived at. */
+export type PaySource = "line_items" | "manual";
+
+export type RequestStatus = "new" | "converted" | "discarded";
+
 export type AcceptResult =
   | "accepted"
   | "already_filled"
@@ -135,6 +140,65 @@ export interface Job {
   cancel_reason: string | null;
   unfilled_at: string | null;
   created_by: string;
+  created_at: string;
+  updated_at: string;
+
+  // Pricing (migration 0011)
+  pay_source: PaySource;
+  pay_override_reason: string | null;
+
+  // Work order detail, released to the contractor on assignment (0013)
+  site_contact_name: string | null;
+  site_contact_phone: string | null;
+  access_notes: string | null;
+  customer_reference: string | null;
+
+  // Proof of completion lives in the field ticket app; this is the link (0013)
+  field_ticket_ref: string | null;
+  field_ticket_url: string | null;
+
+  // Friday payment run this job is scheduled into (0013)
+  scheduled_pay_date: string | null;
+}
+
+export interface PriceListItem {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  unit_price_cents: number;
+  unit: string;
+  category: string | null;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface JobLineItem {
+  id: string;
+  job_id: string;
+  price_list_item_id: string | null;
+  code: string | null;
+  description: string;
+  unit: string;
+  unit_price_cents: number;
+  quantity: number;
+  /** Generated in the database as unit_price_cents * quantity. */
+  line_total_cents: number;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface InstallRequest {
+  id: string;
+  status: RequestStatus;
+  raw_text: string;
+  source: "paste" | "email" | "phone" | "manual";
+  received_at: string;
+  parsed: Record<string, unknown>;
+  job_id: string | null;
+  converted_at: string | null;
+  discard_reason: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }

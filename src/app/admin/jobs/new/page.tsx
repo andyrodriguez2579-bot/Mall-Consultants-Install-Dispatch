@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Skill } from "@/lib/types";
+import type { PriceListItem, Skill } from "@/lib/types";
 import { JobForm } from "../job-form";
 
 export const dynamic = "force-dynamic";
@@ -10,11 +10,19 @@ export default async function NewJobPage() {
   await requireAdmin();
   const supabase = await createClient();
 
-  const { data: skills } = await supabase
-    .from("skills")
-    .select("id, slug, name, description, is_active")
-    .eq("is_active", true)
-    .order("name");
+  const [{ data: skills }, { data: priceList }] = await Promise.all([
+    supabase
+      .from("skills")
+      .select("id, slug, name, description, is_active")
+      .eq("is_active", true)
+      .order("name"),
+    supabase
+      .from("price_list_items")
+      .select("*")
+      .eq("is_active", true)
+      .order("sort_order")
+      .order("name"),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -28,7 +36,10 @@ export default async function NewJobPage() {
         </p>
       </div>
 
-      <JobForm skills={(skills ?? []) as Skill[]} />
+      <JobForm
+        skills={(skills ?? []) as Skill[]}
+        priceList={(priceList ?? []) as PriceListItem[]}
+      />
     </div>
   );
 }

@@ -366,18 +366,36 @@ test("a contractor cannot act on a job that is not theirs", async () => {
   );
 });
 
-test("completion is refused without an after photo", async () => {
+test("completion is refused without a field ticket number", async () => {
   const { jobId, tokens } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
   await query("select * from public.accept_job_offer($1)", [sha256(tokens[CONTRACTOR.marcus])]);
   await query("select public.contractor_start_work($1, $2)", [jobId, CONTRACTOR.marcus]);
 
   await assert.rejects(
-    query("select public.contractor_submit_completion($1, $2, $3)", [
+    query("select public.contractor_submit_completion($1, $2, $3, $4)", [
       jobId,
       "All done.",
+      "   ",
       CONTRACTOR.marcus,
     ]),
-    /after photo/i,
+    /field ticket/i,
+    "the field ticket is the proof of work, so it cannot be blank",
+  );
+});
+
+test("completion is refused without notes", async () => {
+  const { jobId, tokens } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
+  await query("select * from public.accept_job_offer($1)", [sha256(tokens[CONTRACTOR.marcus])]);
+  await query("select public.contractor_start_work($1, $2)", [jobId, CONTRACTOR.marcus]);
+
+  await assert.rejects(
+    query("select public.contractor_submit_completion($1, $2, $3, $4)", [
+      jobId,
+      "",
+      "FT-1001",
+      CONTRACTOR.marcus,
+    ]),
+    /notes are required/i,
   );
 });
 

@@ -38,13 +38,53 @@ export function offerSms({ job, link, expiresInHours }: OfferSmsInput): string {
   ].join("\n");
 }
 
-export function assignedSms(job: Pick<Job, "job_number" | "title">, link: string): string {
-  return [
-    `${SMS_SENDER_LABEL}: you have job ${job.job_number}`,
+/**
+ * Sent the moment a contractor wins a job. This is where the full work order
+ * is released -- exact address and site contact, which were withheld while the
+ * job was only an offer.
+ */
+export function assignedSms(
+  job: Pick<
+    Job,
+    | "job_number"
+    | "title"
+    | "address_line1"
+    | "city"
+    | "state_code"
+    | "site_contact_name"
+    | "site_contact_phone"
+    | "scheduled_start"
+  >,
+  link: string,
+): string {
+  const lines = [
+    `${SMS_SENDER_LABEL}: job ${job.job_number} is yours`,
     job.title,
-    `Details and check-in:`,
-    link,
-  ].join("\n");
+    `${job.address_line1}, ${job.city}, ${job.state_code}`,
+  ];
+
+  if (job.scheduled_start) {
+    lines.push(
+      new Date(job.scheduled_start).toLocaleString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    );
+  }
+
+  if (job.site_contact_name || job.site_contact_phone) {
+    lines.push(
+      `Site contact: ${[job.site_contact_name, job.site_contact_phone]
+        .filter(Boolean)
+        .join(" ")}`,
+    );
+  }
+
+  lines.push("Full work order:", link);
+  return lines.join("\n");
 }
 
 export function filledSms(job: Pick<Job, "job_number">): string {
@@ -66,11 +106,27 @@ export function reworkSms(job: Pick<Job, "job_number">, link: string): string {
   ].join("\n");
 }
 
-export function approvedSms(job: Pick<Job, "job_number" | "contractor_pay_cents" | "currency">): string {
-  return `${SMS_SENDER_LABEL}: job ${job.job_number} approved. ${formatMoney(
-    job.contractor_pay_cents,
-    job.currency,
-  )} is queued for payment.`;
+/**
+ * Approval notice. Names the Friday the payment is scheduled into, because
+ * "when do I get paid" is the question this message exists to answer.
+ */
+export function approvedSms(
+  job: Pick<Job, "job_number" | "contractor_pay_cents" | "currency" | "scheduled_pay_date">,
+): string {
+  const amount = formatMoney(job.contractor_pay_cents, job.currency);
+
+  if (!job.scheduled_pay_date) {
+    return `${SMS_SENDER_LABEL}: job ${job.job_number} approved. ${amount} is queued for the next Friday payment run.`;
+  }
+
+  const [year, month, day] = job.scheduled_pay_date.split("-").map(Number);
+  const when = new Date(year!, month! - 1, day!).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+
+  return `${SMS_SENDER_LABEL}: job ${job.job_number} approved. ${amount} is scheduled for payment on ${when}.`;
 }
 
 export function paidSms(

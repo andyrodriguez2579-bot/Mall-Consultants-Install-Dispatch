@@ -119,6 +119,13 @@ export const completionSchema = z.object({
     .string()
     .trim()
     .min(10, "Describe what you did, in a sentence or two."),
+  // Proof of work lives in the field ticket application; this is the reference
+  // that ties the two records together.
+  field_ticket_ref: z
+    .string()
+    .trim()
+    .min(2, "Enter the field ticket number from the ticket app.")
+    .max(60),
 });
 
 export const reworkSchema = z.object({

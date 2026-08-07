@@ -17,6 +17,16 @@ import { PhotoUploader } from "./photo-uploader";
 
 const EMPTY: WorkState = {};
 
+/** "Friday, Apr 24" from a plain date, without timezone drift. */
+function payDateLabel(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(year!, month! - 1, day!).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function Submit({ children, tone = "primary" }: { children: string; tone?: "primary" | "secondary" | "success" }) {
   const { pending } = useFormStatus();
   return (
@@ -47,11 +57,19 @@ export function WorkPanel({
     return (
       <Card>
         <CardHeader title="Submitted" />
-        <div className="p-4 sm:p-5">
+        <div className="space-y-3 p-4 sm:p-5">
           <SuccessBanner>
             Your work has been submitted and is waiting for review. We will text you when
             it is approved.
           </SuccessBanner>
+          {job.field_ticket_ref ? (
+            <p className="text-sm text-slate-600">
+              Field ticket{" "}
+              <span className="font-mono font-medium text-slate-900">
+                {job.field_ticket_ref}
+              </span>
+            </p>
+          ) : null}
         </div>
       </Card>
     );
@@ -61,12 +79,27 @@ export function WorkPanel({
     return (
       <Card>
         <CardHeader title={job.status === "paid" ? "Paid" : "Approved"} />
-        <div className="p-4 sm:p-5">
+        <div className="space-y-3 p-4 sm:p-5">
           <SuccessBanner>
             {job.status === "paid"
               ? `Payment sent${job.payment_reference ? ` — reference ${job.payment_reference}` : ""}.`
-              : "Your work was approved. Payment is queued."}
+              : "Your work was approved."}
           </SuccessBanner>
+
+          {job.status === "approved" ? (
+            <p className="text-sm text-slate-700">
+              {job.scheduled_pay_date ? (
+                <>
+                  Scheduled for payment on{" "}
+                  <span className="font-semibold">{payDateLabel(job.scheduled_pay_date)}</span>.
+                </>
+              ) : (
+                "Queued for the next Friday payment run."
+              )}
+            </p>
+          ) : null}
+
+          <p className="text-xs text-slate-500">Payments are processed every Friday.</p>
         </div>
       </Card>
     );
@@ -105,29 +138,19 @@ export function WorkPanel({
         {working ? (
           <>
             <div className="space-y-3">
-              <div>
-                <p className="text-sm font-medium text-slate-800">
-                  Before photos{" "}
-                  <span className="font-normal text-slate-500">({beforeCount})</span>
-                </p>
-                <div className="mt-1.5">
-                  <PhotoUploader jobId={job.id} kind="before" label="Add before photos" />
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-slate-800">
-                  After photos{" "}
-                  <span className="font-normal text-slate-500">({afterCount})</span>
-                </p>
-                <div className="mt-1.5">
-                  <PhotoUploader jobId={job.id} kind="after" label="Add after photos" />
-                </div>
-                {afterCount === 0 ? (
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    At least one after photo is required before you can submit.
-                  </p>
-                ) : null}
+              <p className="text-sm font-medium text-slate-800">
+                Photos{" "}
+                <span className="font-normal text-slate-500">
+                  (optional — {beforeCount} before, {afterCount} after)
+                </span>
+              </p>
+              <p className="-mt-1.5 text-xs text-slate-500">
+                Your field ticket is the record of the work. Add photos here only if
+                something is worth flagging.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <PhotoUploader jobId={job.id} kind="before" label="Add before photos" />
+                <PhotoUploader jobId={job.id} kind="after" label="Add after photos" />
               </div>
             </div>
 
@@ -136,6 +159,28 @@ export function WorkPanel({
 
               {state.error ? <ErrorBanner>{state.error}</ErrorBanner> : null}
               {state.success ? <SuccessBanner>{state.success}</SuccessBanner> : null}
+
+              <label className="block">
+                <span className="block text-sm font-medium text-slate-800">
+                  Field ticket number
+                </span>
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  From the field ticket app. This is what your completed work is checked
+                  against, so it has to match.
+                </span>
+                <input
+                  name="field_ticket_ref"
+                  required
+                  defaultValue={job.field_ticket_ref ?? ""}
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  placeholder="FT-2026-4417"
+                  className={inputClass + " mt-1.5 font-mono"}
+                />
+              </label>
+              {state.errors?.field_ticket_ref ? (
+                <p className="text-xs text-rose-600">{state.errors.field_ticket_ref}</p>
+              ) : null}
 
               <label className="block">
                 <span className="block text-sm font-medium text-slate-800">

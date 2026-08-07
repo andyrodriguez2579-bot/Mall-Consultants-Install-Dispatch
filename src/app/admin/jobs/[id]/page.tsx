@@ -13,6 +13,7 @@ import {
 import { requireAdmin } from "@/lib/auth";
 import {
   formatAddress,
+  formatDate,
   formatDateTime,
   formatMoney,
   formatPhone,
@@ -25,6 +26,7 @@ import type {
   ContractorMatch,
   Job,
   JobAttachment,
+  JobLineItem,
   JobOffer,
   Profile,
   Skill,
@@ -60,6 +62,7 @@ export default async function AdminJobDetail({
     { data: assigneeRow },
     { data: matchRows },
     { data: auditRows },
+    { data: lineItemRows },
   ] = await Promise.all([
     supabase
       .from("job_offers")
@@ -82,6 +85,7 @@ export default async function AdminJobDetail({
       .eq("entity_id", id)
       .order("created_at", { ascending: false })
       .limit(30),
+    supabase.from("job_line_items").select("*").eq("job_id", id).order("sort_order"),
   ]);
 
   const offers = (offerRows ?? []) as unknown as OfferRow[];
@@ -92,6 +96,7 @@ export default async function AdminJobDetail({
   const assignee = assigneeRow as Pick<Profile, "id" | "full_name" | "phone" | "email"> | null;
   const matches = (matchRows ?? []) as ContractorMatch[];
   const audit = (auditRows ?? []) as AuditEntry[];
+  const lineItems = (lineItemRows ?? []) as JobLineItem[];
 
   const photos = await signAttachments(
     attachments.filter((a) => a.kind === "before" || a.kind === "after"),
@@ -143,12 +148,53 @@ export default async function AdminJobDetail({
           <Detail
             label="Contractor pay"
             value={
-              <span className="text-base font-semibold">
-                {formatMoney(job.contractor_pay_cents, job.currency)}
+              <span>
+                <span className="text-base font-semibold">
+                  {formatMoney(job.contractor_pay_cents, job.currency)}
+                </span>
+                {job.pay_source === "manual" ? (
+                  <span className="ml-2 text-xs text-amber-700">
+                    set by hand
+                    {job.pay_override_reason ? ` — ${job.pay_override_reason}` : ""}
+                  </span>
+                ) : (
+                  <span className="ml-2 text-xs text-slate-500">from work items</span>
+                )}
               </span>
             }
           />
           <Detail label="Deadline" value={formatDateTime(job.deadline_at)} />
+          {job.customer_reference ? (
+            <Detail label="Customer reference" value={job.customer_reference} />
+          ) : null}
+          {job.scheduled_pay_date ? (
+            <Detail
+              label="Payment scheduled"
+              value={formatDate(`${job.scheduled_pay_date}T12:00:00`)}
+            />
+          ) : null}
+          {job.site_contact_name || job.site_contact_phone ? (
+            <Detail
+              label="Site contact"
+              value={
+                <span>
+                  {job.site_contact_name ?? "—"}
+                  {job.site_contact_phone ? (
+                    <span className="ml-2 text-slate-500">
+                      {formatPhone(job.site_contact_phone)}
+                    </span>
+                  ) : null}
+                </span>
+              }
+            />
+          ) : null}
+          {job.access_notes ? (
+            <Detail
+              label="Access"
+              className="sm:col-span-2"
+              value={<span className="whitespace-pre-wrap">{job.access_notes}</span>}
+            />
+          ) : null}
           <Detail label="Scheduled start" value={formatDateTime(job.scheduled_start)} />
           <Detail label="Scheduled end" value={formatDateTime(job.scheduled_end)} />
           <Detail
@@ -205,6 +251,60 @@ export default async function AdminJobDetail({
           ) : null}
         </dl>
       </Card>
+
+      {lineItems.length > 0 ? (
+        <Card>
+          <CardHeader
+            title="Work items"
+            description="How the contractor payment was built. Each row keeps the rate it was priced at."
+          />
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Item</th>
+                  <th className="px-4 py-2 text-right font-medium">Qty</th>
+                  <th className="px-4 py-2 text-right font-medium">Rate</th>
+                  <th className="px-4 py-2 text-right font-medium">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {lineItems.map((li) => (
+                  <tr key={li.id}>
+                    <td className="px-4 py-2.5">
+                      <span className="font-medium text-slate-900">{li.description}</span>
+                      {li.code ? (
+                        <span className="ml-2 font-mono text-[11px] text-slate-400">
+                          {li.code}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
+                      {Number(li.quantity)} {li.unit}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
+                      {formatMoney(li.unit_price_cents, job.currency)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium tabular-nums text-slate-900">
+                      {formatMoney(li.line_total_cents, job.currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t-2 border-slate-200 bg-slate-50">
+                <tr>
+                  <td colSpan={3} className="px-4 py-2.5 text-right font-medium text-slate-700">
+                    Contractor pay
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-base font-bold tabular-nums text-slate-900">
+                    {formatMoney(job.contractor_pay_cents, job.currency)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      ) : null}
 
       {canDispatch ? (
         <DispatchPanel jobId={id} matches={matches} jobStatus={job.status} />
@@ -278,15 +378,31 @@ export default async function AdminJobDetail({
         </Card>
       ) : null}
 
-      {(beforePhotos.length > 0 || afterPhotos.length > 0 || job.completion_notes) ? (
+      {(beforePhotos.length > 0 || afterPhotos.length > 0 || job.completion_notes || job.field_ticket_ref) ? (
         <Card>
           <CardHeader
-            title="Completion evidence"
+            title="Completion"
             description={
               job.completed_at ? `Submitted ${formatRelative(job.completed_at)}` : undefined
             }
           />
           <div className="space-y-4 p-4 sm:p-5">
+            {/* The field ticket is the proof of work; anything below it is
+                supporting material the contractor chose to add. */}
+            {job.field_ticket_ref ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Field ticket
+                </p>
+                <p className="mt-0.5 font-mono text-base font-semibold text-slate-900">
+                  {job.field_ticket_ref}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Check this against the ticket app before approving.
+                </p>
+              </div>
+            ) : null}
+
             {job.completion_notes ? (
               <Detail
                 label="Contractor notes"

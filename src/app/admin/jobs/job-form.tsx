@@ -11,7 +11,8 @@ import {
   buttonClass,
   inputClass,
 } from "@/components/ui";
-import type { Job, Skill } from "@/lib/types";
+import { LineItemEditor, type EditableLineItem } from "@/components/line-item-editor";
+import type { Job, PriceListItem, Skill } from "@/lib/types";
 import { type FormState, createJob, updateJob } from "./actions";
 
 const EMPTY: FormState = {};
@@ -62,12 +63,16 @@ function Actions({ isEdit, payLocked }: { isEdit: boolean; payLocked: boolean })
 
 export function JobForm({
   skills,
+  priceList,
   job,
   selectedSkillIds = [],
+  initialLineItems = [],
 }: {
   skills: Skill[];
+  priceList: PriceListItem[];
   job?: Job;
   selectedSkillIds?: string[];
+  initialLineItems?: EditableLineItem[];
 }) {
   const isEdit = Boolean(job);
   const [state, action] = useActionState(isEdit ? updateJob : createJob, EMPTY);
@@ -212,34 +217,97 @@ export function JobForm({
 
       <Card>
         <CardHeader
-          title="Payment and schedule"
-          description="Contractor pay is fixed at dispatch and cannot change afterwards."
+          title="Site contact and access"
+          description="Withheld while the job is only an offer, released the moment it is accepted."
         />
         <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
-          <Field
-            label="Contractor pay (USD)"
-            error={err.contractor_pay}
-            required
-            hint={payLocked ? "Locked — already dispatched." : "Flat amount for the whole job."}
-          >
+          <Field label="Site contact" error={err.site_contact_name}>
             <input
-              name="contractor_pay"
-              defaultValue={job ? (job.contractor_pay_cents / 100).toFixed(2) : ""}
-              required
-              readOnly={payLocked}
-              inputMode="decimal"
-              placeholder="850.00"
-              className={inputClass + (payLocked ? " bg-slate-100 text-slate-500" : "")}
-            />
-          </Field>
-          <Field label="Deadline" error={err.deadline_at} hint="Must be complete by.">
-            <input
-              type="datetime-local"
-              name="deadline_at"
-              defaultValue={toLocalInput(job?.deadline_at)}
+              name="site_contact_name"
+              defaultValue={job?.site_contact_name ?? ""}
+              placeholder="Danielle Ruiz"
               className={inputClass}
             />
           </Field>
+          <Field label="Contact phone" error={err.site_contact_phone}>
+            <input
+              name="site_contact_phone"
+              type="tel"
+              defaultValue={job?.site_contact_phone ?? ""}
+              placeholder="(713) 555-0199"
+              className={inputClass}
+            />
+          </Field>
+          <Field
+            label="Access notes"
+            hint="Parking, badging, loading dock, who to ask for."
+            error={err.access_notes}
+          >
+            <textarea
+              name="access_notes"
+              rows={2}
+              defaultValue={job?.access_notes ?? ""}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Customer reference / PO" error={err.customer_reference}>
+            <input
+              name="customer_reference"
+              defaultValue={job?.customer_reference ?? ""}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Work items and contractor pay"
+          description={
+            payLocked
+              ? "Locked — this job has been dispatched, so the pay a contractor accepted cannot move."
+              : "Priced from the price list. The contractor payment is the sum of these."
+          }
+        />
+        <div className="space-y-4 p-4 sm:p-5">
+          <LineItemEditor
+            priceList={priceList}
+            initialItems={initialLineItems}
+            disabled={payLocked}
+          />
+
+          <div className="border-t border-slate-200 pt-4">
+            <Field
+              label="Or set a flat amount (USD)"
+              error={err.contractor_pay}
+              hint={
+                payLocked
+                  ? "Locked — already dispatched."
+                  : "Used only when there are no work items above."
+              }
+            >
+              <input
+                name="contractor_pay"
+                defaultValue={
+                  job && job.pay_source === "manual"
+                    ? (job.contractor_pay_cents / 100).toFixed(2)
+                    : "0"
+                }
+                readOnly={payLocked}
+                inputMode="decimal"
+                placeholder="850.00"
+                className={
+                  inputClass + " w-40" + (payLocked ? " bg-slate-100 text-slate-500" : "")
+                }
+              />
+            </Field>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Schedule" />
+        <div className="grid gap-4 p-4 sm:grid-cols-3 sm:p-5">
           <Field label="Scheduled start" error={err.scheduled_start}>
             <input
               type="datetime-local"
@@ -253,6 +321,14 @@ export function JobForm({
               type="datetime-local"
               name="scheduled_end"
               defaultValue={toLocalInput(job?.scheduled_end)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Deadline" error={err.deadline_at} hint="Must be complete by.">
+            <input
+              type="datetime-local"
+              name="deadline_at"
+              defaultValue={toLocalInput(job?.deadline_at)}
               className={inputClass}
             />
           </Field>
