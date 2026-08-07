@@ -1,11 +1,17 @@
 import type { JobStatus, OfferStatus } from "./types";
 
-/** Money is stored in integer cents everywhere; format only at the edge. */
+/**
+ * Money is stored in integer cents everywhere; format only at the edge.
+ *
+ * Always two decimal places, including on whole dollars. A financial breakdown
+ * that mixes "$120" with "$14.50" is harder to scan and reads as sloppy on a
+ * document someone is being paid from.
+ */
 export function formatMoney(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
-    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(cents / 100);
 }
