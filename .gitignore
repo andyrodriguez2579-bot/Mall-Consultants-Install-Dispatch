@@ -1,0 +1,41 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# testing
+/coverage
+
+# local postgres cluster used by the test harness
+/.localdb/
+
+# misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files -- never commit real credentials
+.env
+.env*.local
+.env.production
+
+# vercel
+.vercel
+
+# supabase cli local state
+/supabase/.temp/
+/supabase/.branches/
