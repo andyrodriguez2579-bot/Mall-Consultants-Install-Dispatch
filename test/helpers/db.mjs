@@ -121,16 +121,21 @@ export async function createOfferedJob({
  * Create `count` approved contractors holding the given skills, so a race can
  * be run at a width the seed data does not cover.
  */
-// Phone numbers are globally unique in the schema, so the counter must not
-// restart per call -- successive fixtures would otherwise collide.
-let phoneCounter = 6_000_000;
+/**
+ * Phone numbers are globally unique in the schema, and the test runner executes
+ * each file in its own process -- so a per-module counter is not enough, since
+ * every process would start it at the same value. Draw from a wide random range
+ * instead, which is independent of how many processes are running.
+ */
+function uniquePhone() {
+  return `+1${crypto.randomInt(2_000_000_000, 9_999_999_999)}`;
+}
 
 export async function createContractors(count, skillIds = [SKILL.ssdc]) {
   const ids = [];
   for (let i = 0; i < count; i += 1) {
     const id = crypto.randomUUID();
-    phoneCounter += 1;
-    const phone = `+1713${String(phoneCounter).padStart(7, "0")}`;
+    const phone = uniquePhone();
     await query(
       `insert into auth.users (id, email, aud, role) values ($1, $2, 'authenticated', 'authenticated')`,
       [id, `racer-${id}@example.test`],

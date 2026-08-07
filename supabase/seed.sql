@@ -272,23 +272,29 @@ on conflict do nothing;
 -- Live offers on the 'offered' job.
 --
 -- Tokens are derived deterministically from a readable string so local demo
--- links are reproducible. Only the SHA-256 is stored, exactly as in production;
--- the raw token for contractor X is 'seed-offer-<name>'.
---   Marcus -> /offer/seed-offer-marcus
---   Dana   -> /offer/seed-offer-dana
---   Priya  -> /offer/seed-offer-priya
---   Tom    -> /offer/seed-offer-tom      (approved, but not SSDC certified)
+-- links are reproducible. Only the SHA-256 is stored, exactly as in production.
+-- They are padded out to the length a real 256-bit token has, because the
+-- application rejects anything shorter before it reaches the database.
+--   Marcus -> /offer/seed-offer-marcus-development-only-do-not-reuse
+--   Dana   -> /offer/seed-offer-dana-development-only-do-not-reuse
+--   Priya  -> /offer/seed-offer-priya-development-only-do-not-reuse
+--   Tom    -> /offer/seed-offer-tom-development-only-do-not-reuse
+--            (approved, but not SSDC certified -- his acceptance is refused)
 -- ---------------------------------------------------------------------------
 insert into public.job_offers (job_id, contractor_id, round, status, token_hash, expires_at, sent_at)
 values
   ('55555555-5555-4555-8555-555555555503', '22222222-2222-4222-8222-222222222201', 1, 'delivered',
-   encode(extensions.digest('seed-offer-marcus', 'sha256'), 'hex'), now() + interval '4 hours', now() - interval '10 minutes'),
+   encode(extensions.digest('seed-offer-marcus-development-only-do-not-reuse', 'sha256'), 'hex'),
+   now() + interval '4 hours', now() - interval '10 minutes'),
   ('55555555-5555-4555-8555-555555555503', '22222222-2222-4222-8222-222222222202', 1, 'delivered',
-   encode(extensions.digest('seed-offer-dana', 'sha256'), 'hex'),   now() + interval '4 hours', now() - interval '10 minutes'),
+   encode(extensions.digest('seed-offer-dana-development-only-do-not-reuse', 'sha256'), 'hex'),
+   now() + interval '4 hours', now() - interval '10 minutes'),
   ('55555555-5555-4555-8555-555555555503', '22222222-2222-4222-8222-222222222203', 1, 'sent',
-   encode(extensions.digest('seed-offer-priya', 'sha256'), 'hex'),  now() + interval '4 hours', now() - interval '10 minutes'),
+   encode(extensions.digest('seed-offer-priya-development-only-do-not-reuse', 'sha256'), 'hex'),
+   now() + interval '4 hours', now() - interval '10 minutes'),
   ('55555555-5555-4555-8555-555555555503', '22222222-2222-4222-8222-222222222204', 1, 'delivered',
-   encode(extensions.digest('seed-offer-tom', 'sha256'), 'hex'),    now() + interval '4 hours', now() - interval '10 minutes')
+   encode(extensions.digest('seed-offer-tom-development-only-do-not-reuse', 'sha256'), 'hex'),
+   now() + interval '4 hours', now() - interval '10 minutes')
 on conflict do nothing;
 
 -- Historical offers for the jobs that were already won.
