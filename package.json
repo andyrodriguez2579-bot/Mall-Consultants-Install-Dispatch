@@ -15,8 +15,8 @@
     "db:stop": "node scripts/local-db.mjs stop",
     "db:reset": "node scripts/local-db.mjs reset",
     "db:psql": "node scripts/local-db.mjs psql",
-    "test": "node scripts/local-db.mjs reset && node --test test/",
-    "test:only": "node --test test/"
+    "test": "node scripts/local-db.mjs reset && node --test \"test/*.test.mjs\"",
+    "test:only": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",

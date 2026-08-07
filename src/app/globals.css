@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/*
+  Mobile-first by construction. Contractors read offers on a phone, often
+  outdoors and in a hurry, so the base styles target a small bright screen and
+  desktop is the enhancement.
+*/
+
+@theme {
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #e2e8f0;
+  --color-canvas: #f8fafc;
+  --color-brand: #1d4ed8;
+  --color-brand-dark: #1e3a8a;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  /* Respect the notch and the home indicator on phones. */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Inputs below 16px make iOS Safari zoom on focus, which is disorienting
+   mid-form. Hold the floor at 16px on touch screens. */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Give tappable controls a real target size regardless of their text. */
+button,
+[role="button"],
+a.tap {
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
