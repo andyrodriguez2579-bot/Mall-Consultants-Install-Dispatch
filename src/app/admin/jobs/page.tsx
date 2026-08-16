@@ -2,11 +2,13 @@ import Link from "next/link";
 import {
   Card,
   EmptyState,
+  ErrorBanner,
   JobStatusBadge,
   buttonClass,
 } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth";
 import { JOB_STATUS_LABEL, formatDate, formatMoney, formatRelative } from "@/lib/format";
+import { profilesByIds } from "@/lib/people";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, JobStatus, Profile } from "@/lib/types";
 
@@ -55,8 +57,11 @@ export default async function AdminJobsPage({
 
   let query = supabase
     .from("jobs")
+    // No embed for the assignee: see profilesByIds in src/lib/people.ts. An
+    // unqualified embed here failed the whole query, so every filter -- not
+    // just this one -- rendered an empty list.
     .select(
-      "id, job_number, status, title, customer_name, city, state_code, contractor_pay_cents, currency, scheduled_start, offer_expires_at, assigned_contractor_id, created_at, assignee:assigned_contractor_id(full_name)",
+      "id, job_number, status, title, customer_name, city, state_code, contractor_pay_cents, currency, scheduled_start, offer_expires_at, assigned_contractor_id, created_at",
     )
     .order("created_at", { ascending: false })
     .limit(200);
@@ -70,14 +75,26 @@ export default async function AdminJobsPage({
     );
   }
 
-  const { data } = await query;
-  const jobs = (data ?? []) as unknown as JobRow[];
+  const { data, error } = await query;
+
+  const people = await profilesByIds(
+    supabase,
+    (data ?? []).map((j) => (j as { assigned_contractor_id: string | null }).assigned_contractor_id),
+  );
+  const jobs = ((data ?? []) as unknown as JobRow[]).map((j) => ({
+    ...j,
+    assignee: j.assigned_contractor_id ? (people.get(j.assigned_contractor_id) ?? null) : null,
+  })) as JobRow[];
 
   const exportParams = new URLSearchParams({ status });
   if (q) exportParams.set("q", q);
 
   return (
     <div className="space-y-5">
+      {/* A failed query and an empty result rendered identically, which turned
+          "the list is broken" into "there are no jobs". */}
+      {error ? <ErrorBanner>Could not load jobs: {error.message}</ErrorBanner> : null}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-bold text-slate-900">Jobs</h1>
         <div className="flex gap-2">
