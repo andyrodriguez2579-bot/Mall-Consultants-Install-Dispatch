@@ -5,8 +5,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { type ParsedRequest, parseInstallRequest } from "@/lib/intake/parse";
-import { sheetScope, sheetTitle } from "@/lib/intake/summary";
-import type { EquipmentItem } from "@/lib/intake/workbook";
+import { sheetInstructions, sheetScope, sheetTitle } from "@/lib/intake/summary";
+import type { SheetDetails, SheetItem, SheetSection } from "@/lib/intake/workbook";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, PriceListItem } from "@/lib/types";
 import { readPricingForm, upsertJobPricing, validatePricing } from "@/lib/pricing-form";
@@ -16,49 +16,65 @@ import { fieldErrors, jobFormSchema, readMulti } from "@/lib/validation";
 const MAX_SHEET_CHARS = 80_000;
 
 /**
- * The parts list, as the browser extracted it.
+ * What the sheet asked for, as the browser extracted it.
  *
  * The workbook is read client-side -- Vercel caps every request at 4.5 MB and
  * these files are larger -- so this arrives as JSON from the page rather than
  * from a file the server read itself. It is shaped and bounded here rather than
- * stored as received: it is written into a job's site instructions, which a
+ * stored as received: it becomes a job's scope and site instructions, which a
  * contractor is then sent.
  */
-function readEquipmentField(raw: FormDataEntryValue | null): EquipmentItem[] {
-  if (typeof raw !== "string" || !raw.trim()) return [];
+const SECTIONS: SheetSection[] = ["install", "dispenser_equipment", "chemicals"];
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function readDetailsField(raw: FormDataEntryValue | null): SheetDetails {
+  const empty: SheetDetails = { items: [], notes: [], customerEmail: null };
+  if (typeof raw !== "string" || !raw.trim()) return empty;
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return [];
+    return empty;
   }
-  if (!Array.isArray(parsed)) return [];
+  if (typeof parsed !== "object" || parsed === null) return empty;
 
+  const source = parsed as { items?: unknown; notes?: unknown };
   const str = (v: unknown, max: number): string =>
     typeof v === "string" ? v.slice(0, max) : "";
 
-  return parsed.slice(0, 500).flatMap((row): EquipmentItem[] => {
-    if (typeof row !== "object" || row === null) return [];
-    const item = row as Record<string, unknown>;
-    const description = str(item.description, 200);
-    const partNumber = str(item.partNumber, 40);
-    if (!description && !partNumber) return [];
+  const items = (Array.isArray(source.items) ? source.items : [])
+    .slice(0, 300)
+    .flatMap((row): SheetItem[] => {
+      if (typeof row !== "object" || row === null) return [];
+      const item = row as Record<string, unknown>;
+      const description = str(item.description, 200);
+      if (!description) return [];
 
-    const quantity =
-      typeof item.quantity === "number" && Number.isFinite(item.quantity) && item.quantity >= 0
-        ? Math.min(Math.round(item.quantity), 9999)
-        : null;
+      const section = SECTIONS.find((s) => s === item.section) ?? "install";
+      const quantity =
+        typeof item.quantity === "number" && Number.isFinite(item.quantity) && item.quantity > 0
+          ? Math.min(Math.round(item.quantity), 9999)
+          : null;
 
-    return [
-      {
-        group: str(item.group, 120) || null,
-        partNumber,
-        description,
-        quantity,
-      },
-    ];
-  });
+      return [
+        {
+          section,
+          category: str(item.category, 120),
+          code: str(item.code, 40) || null,
+          description,
+          quantity,
+        },
+      ];
+    });
+
+  const notes = (Array.isArray(source.notes) ? source.notes : [])
+    .slice(0, 30)
+    .map((n) => str(n, 1000))
+    .filter(Boolean);
+
+  const email = str((source as { customerEmail?: unknown }).customerEmail, 200);
+  return { items, notes, customerEmail: EMAIL_SHAPE.test(email) ? email : null };
 }
 
 export interface RequestState {
@@ -84,7 +100,7 @@ export async function createRequest(
   const sheetText = formData.get("sheet_text");
 
   let rawText = typeof pasted === "string" ? pasted.trim() : "";
-  let equipment: EquipmentItem[] = [];
+  let details: SheetDetails = { items: [], notes: [], customerEmail: null };
 
   if (typeof sheetText === "string" && sheetText.trim()) {
     if (sheetText.length > MAX_SHEET_CHARS) {
@@ -94,7 +110,7 @@ export async function createRequest(
         },
       };
     }
-    equipment = readEquipmentField(formData.get("equipment"));
+    details = readDetailsField(formData.get("details"));
     // The covering email is kept, and kept second. The extractor falls back
     // to scanning the whole document for an address, and a "ship equipment
     // to" line in the email must not outrank the job site on the sheet.
@@ -126,7 +142,7 @@ export async function createRequest(
     ? {
         ...parsed,
         title: { value: sheetTitle(parsed), evidence: "composed from the sheet", basis: "label" },
-        scope: sheetScope(parsed, equipment),
+        scope: sheetScope(parsed, details),
       }
     : parsed;
 
@@ -135,7 +151,7 @@ export async function createRequest(
     .insert({
       raw_text: rawText,
       source: typeof source === "string" && source ? source : "paste",
-      parsed: { ...summarised, equipment } as unknown as Record<string, unknown>,
+      parsed: { ...summarised, details } as unknown as Record<string, unknown>,
       created_by: admin.id,
     })
     .select("id")

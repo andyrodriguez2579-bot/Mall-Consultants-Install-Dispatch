@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as XLSX from "xlsx";
 
-import { readEquipment, readWorkbook, isSpreadsheetFilename } from "../src/lib/intake/workbook.ts";
+import { readSheetDetails, readWorkbook, isSpreadsheetFilename } from "../src/lib/intake/workbook.ts";
 import { parseInstallRequest } from "../src/lib/intake/parse.ts";
 
 /**
@@ -20,9 +20,21 @@ function installSheet() {
     ["CUSTOMER FIRST & LAST NAME:", "Anthony Martinelli", "VOLTAGE:", "", "", "Standard Height Conveyor"],
     ["CUSTOMER PHONE:", "973-800-2686", "BREAKER:", "", "", "96522180", "Standard Hood Vent Cowl (2)"],
     ["CUSTOMER EMAIL:", "a@example.com", "", "", "", "53001265", "Short Curtain (4)"],
-    ["", "", "", "", "", "High Hood Conveyor"],
-    ["", "", "", "", "", "96522211", "High Hood Vent Cowl", "3"],
+    // The conveyor table continues down the right-hand columns throughout.
+    ["PRODUCTS BEING USED", "", "", "", "", "96522211", "High Hood Vent Cowl (2)"],
+    ["3 SINK - DETERGENTS", "243641 DM TRIO PREM DISH DET 2/1 GAL SNAP PACK", "3 SINK - DETERGENTS", "", "", "88020433", "Bolt SS (13)"],
+    ["FLOOR CLEANERS", "244422 FM ALL PURP & FLR CLNR 4/1 GAL", "GLASS CLEANERS", "", "", "88429113", "Lock-Nut SS (13)"],
+    ["AREAS OF INSTALL: **COMPLETED BY SSDC**", "", "", "", "QUANTITY"],
+    ["DM Set-up (1)", "", "Spray Bottles"],
+    ["Dispenser(s)", "53000642 A-PROGRAM", "Racks & Equipment", "92153964 HI FLW AIR GAP WHT PP", "1"],
+    ["Dispenser(s)", "92211944 STD SINK RITE SOLO", "Racks & Equipment", "92220912 TBG FLX GRAY", "2"],
+    ["DM DISPENSER EQUIPMENT **COMPLETED BY SSDC**"],
+    ["EQUIPMENT", "", "EQUIPMENT"],
+    ["NOTES"],
+    ["PLEASE INSTALL SINKRITE AND GANG A SOLO FLOOR DISPENSER AT THE 3 COMP SINK"],
+    ["Please see information enclosed in the tabs below regarding recommended tips and caps."],
   ];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "INSTALL");
   XLSX.utils.book_append_sheet(
@@ -51,24 +63,49 @@ test("a label takes the value beside it, never one several columns away", () => 
   assert.ok(!/BREAKER:\s*96522180/.test(text), "a label must not reach across empty columns");
 });
 
-test("the parts table is read by column, with quantities and machine grouping", () => {
-  const { equipment } = readWorkbook(installSheet());
+test("the conveyor reference table is not read as this job's equipment", () => {
+  const { details } = readWorkbook(installSheet());
 
-  assert.equal(equipment.length, 3);
+  // That table is printed on every copy of the form, marked "not supplied".
+  // Reading it produces two dozen bolts and curtain hooks nobody ordered.
+  const descriptions = details.items.map((i) => i.description).join(" | ");
+  assert.ok(!/Hood Vent Cowl|Lock-Nut|Bolt SS|Short Curtain/.test(descriptions),
+    `conveyor reference parts leaked in: ${descriptions}`);
+});
 
-  assert.deepEqual(equipment[0], {
-    group: "Standard Height Conveyor",
-    partNumber: "96522180",
-    description: "Standard Hood Vent Cowl",
-    quantity: 2,
+test("the sheet's own sections are read, with codes and quantities", () => {
+  const { details } = readWorkbook(installSheet());
+
+  const install = details.items.filter((i) => i.section === "install");
+  assert.equal(install.length, 4);
+
+  assert.deepEqual(install[0], {
+    section: "install",
+    category: "Dispenser(s)",
+    code: "53000642",
+    description: "A-PROGRAM",
+    quantity: null,
   });
 
-  // Quantity in parentheses, and quantity in its own column, both understood.
-  assert.equal(equipment[1].quantity, 4);
-  assert.equal(equipment[2].quantity, 3);
+  // The quantity column serves the right-hand pair only.
+  const tubing = install.find((i) => i.description.startsWith("TBG FLX"));
+  assert.equal(tubing.quantity, 2);
 
-  // A second machine starts a new group rather than continuing the first.
-  assert.equal(equipment[2].group, "High Hood Conveyor");
+  const chemicals = details.items.filter((i) => i.section === "chemicals");
+  assert.equal(chemicals.length, 2);
+  assert.equal(chemicals[0].code, "243641");
+  assert.equal(chemicals[0].category, "3 SINK - DETERGENTS");
+
+  // An empty row under a heading contributes nothing.
+  assert.ok(!details.items.some((i) => i.description === ""));
+});
+
+test("the sheet's notes are kept and its printed boilerplate is not", () => {
+  const { details } = readWorkbook(installSheet());
+
+  assert.deepEqual(details.notes, [
+    "PLEASE INSTALL SINKRITE AND GANG A SOLO FLOOR DISPENSER AT THE 3 COMP SINK",
+  ]);
 });
 
 test("the flattened sheet feeds the extractor the job's own address", () => {
@@ -120,27 +157,31 @@ test("filenames are checked before the bytes are", () => {
   assert.ok(!isSpreadsheetFilename("invoice.pdf"));
 });
 
-test("an empty parts table yields no equipment rather than throwing", () => {
-  assert.deepEqual(readEquipment([["ACCOUNT NAME:", "Acme"]]), []);
+test("a sheet with no sections yields nothing rather than throwing", () => {
+  assert.deepEqual(readSheetDetails([["ACCOUNT NAME:", "Acme"]]), {
+    items: [],
+    notes: [],
+    customerEmail: null,
+  });
 });
 
 test("a sheet's title and scope are composed, not lifted from the grid", async () => {
   const { sheetScope, sheetTitle } = await import("../src/lib/intake/summary.ts");
-  const { text, equipment } = readWorkbook(installSheet());
+  const { text, details } = readWorkbook(installSheet());
   const parsed = parseInstallRequest(text, []);
 
   const title = sheetTitle(parsed);
   assert.equal(title, "SSDC installation — Luigi's Pizza, Ringwood");
   assert.ok(!title.includes("|"), "a grid row must never become the title");
 
-  const scope = sheetScope(parsed, equipment);
+  const scope = sheetScope(parsed, details);
   assert.ok(scope.includes("Luigi's Pizza"));
   assert.ok(scope.includes("Ringwood, NJ"));
-  assert.ok(scope.includes("Standard Height Conveyor"), "names the machines");
-  assert.ok(scope.includes("High Hood Conveyor"));
+  assert.ok(scope.includes("SINKRITE"), "the sheet's own note leads the scope");
+  assert.ok(scope.includes("A-PROGRAM"), "names what is being installed");
 
   // The point of composing it: a contractor reads a few lines, not the form.
-  assert.ok(scope.length < 400, `scope should stay short, got ${scope.length} chars`);
+  assert.ok(scope.length < 600, `scope should stay short, got ${scope.length} chars`);
   assert.ok(!scope.includes("PFG SPECIALIST"), "sales fields must not reach the contractor");
   assert.ok(!scope.includes("B9 ACCOUNT NUMBER"));
 });

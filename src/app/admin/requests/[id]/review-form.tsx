@@ -12,7 +12,8 @@ import {
 } from "@/components/ui";
 import { PricingPanel } from "@/components/pricing-panel";
 import type { ExtractedField, ParsedRequest } from "@/lib/intake/parse";
-import type { EquipmentItem } from "@/lib/intake/workbook";
+import { sheetInstructions } from "@/lib/intake/summary";
+import type { SheetDetails, SheetItem, SheetSection } from "@/lib/intake/workbook";
 import type { PriceListItem, Skill } from "@/lib/types";
 import {
   type RequestState,
@@ -71,7 +72,7 @@ export function ReviewForm({
   parsed,
   priceList,
   skills,
-  equipment,
+  details,
   contractorBps,
   mileageRate,
   commuterMiles,
@@ -80,7 +81,7 @@ export function ReviewForm({
   parsed: ParsedRequest;
   priceList: PriceListItem[];
   skills: Skill[];
-  equipment: EquipmentItem[];
+  details: SheetDetails;
   contractorBps: number;
   mileageRate: number;
   commuterMiles: number;
@@ -222,15 +223,17 @@ export function ReviewForm({
             <Field label="Site instructions" error={err.instructions}>
               <textarea
                 name="instructions"
-                rows={equipment.length > 0 ? 8 : 2}
-                defaultValue={equipmentText(equipment)}
+                rows={details.items.length > 0 ? 10 : 2}
+                defaultValue={sheetInstructions(details, parsed, details.customerEmail)}
                 className={inputClass}
               />
             </Field>
           </div>
         </Card>
 
-        {equipment.length > 0 ? <EquipmentList items={equipment} /> : null}
+        {details.items.length > 0 || details.notes.length > 0 ? (
+          <SheetSummary details={details} />
+        ) : null}
 
         <PricingPanel
           priceList={priceList}
@@ -328,76 +331,67 @@ export function ReviewForm({
   );
 }
 
-/**
- * The parts list as text for the site instructions.
- *
- * Grouped by machine, because the sheet lists a full parts set per machine
- * option and a contractor who brings the wrong set has made a wasted trip.
- */
-function equipmentText(items: EquipmentItem[]): string {
-  if (items.length === 0) return "";
+const SECTION_TITLE: Record<SheetSection, string> = {
+  install: "To install",
+  dispenser_equipment: "Dispenser equipment",
+  chemicals: "Chemicals in use",
+};
 
-  const groups = new Map<string, EquipmentItem[]>();
-  for (const item of items) {
-    const key = item.group ?? "Parts";
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  }
-
-  return [...groups.entries()]
-    .map(([group, list]) =>
-      [
-        `${group}:`,
-        ...list.map(
-          (i) =>
-            `  ${i.quantity ?? 1} x ${i.description}${
-              i.partNumber ? ` (part ${i.partNumber})` : ""
-            }`,
-        ),
-      ].join("\n"),
-    )
-    .join("\n\n");
-}
-
-/** What the sheet says is needed, shown before the job is priced. */
-function EquipmentList({ items }: { items: EquipmentItem[] }) {
-  const groups = new Map<string, EquipmentItem[]>();
-  for (const item of items) {
-    const key = item.group ?? "Parts";
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  }
+/** What the sheet asked for, shown before the job is priced. */
+function SheetSummary({ details }: { details: SheetDetails }) {
+  const sections: SheetSection[] = ["install", "dispenser_equipment", "chemicals"];
 
   return (
     <Card>
       <CardHeader
-        title={`Equipment on the sheet — ${items.length} ${
-          items.length === 1 ? "part" : "parts"
-        }`}
-        description="Read from the install sheet's parts table. Prefilled into the site instructions below."
+        title="What the sheet asks for"
+        description="Read from the install sheet. Prefilled into the scope and site instructions below."
       />
       <div className="space-y-4 p-4 sm:p-5">
-        {[...groups.entries()].map(([group, list]) => (
-          <div key={group}>
-            <p className="text-sm font-semibold text-slate-900">{group}</p>
-            <ul className="mt-1 space-y-0.5">
-              {list.map((item) => (
-                <li
-                  key={`${group}-${item.partNumber}-${item.description}`}
-                  className="flex justify-between gap-4 text-sm text-slate-700"
-                >
-                  <span>
-                    {item.description}{" "}
-                    <span className="font-mono text-[11px] text-slate-400">
-                      {item.partNumber}
-                    </span>
-                  </span>
-                  <span className="tabular-nums text-slate-500">
-                    ×{item.quantity ?? 1}
-                  </span>
-                </li>
-              ))}
-            </ul>
+        {details.notes.length > 0 ? (
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Notes on the sheet</p>
+            {details.notes.map((note) => (
+              <p key={note} className="mt-1 text-sm text-slate-700">
+                {note}
+              </p>
+            ))}
           </div>
-        ))}
+        ) : null}
+
+        {sections.map((section) => {
+          const items = details.items.filter((i) => i.section === section);
+          if (items.length === 0) return null;
+
+          return (
+            <div key={section}>
+              <p className="text-sm font-semibold text-slate-900">
+                {SECTION_TITLE[section]}
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {items.map((item) => (
+                  <li
+                    key={`${section}-${item.code ?? ""}-${item.description}`}
+                    className="flex flex-wrap justify-between gap-x-4 text-sm text-slate-700"
+                  >
+                    <span>
+                      {item.description}{" "}
+                      {item.code ? (
+                        <span className="font-mono text-[11px] text-slate-400">
+                          {item.code}
+                        </span>
+                      ) : null}
+                      <span className="text-xs text-slate-400"> · {item.category}</span>
+                    </span>
+                    {item.quantity && item.quantity > 1 ? (
+                      <span className="tabular-nums text-slate-500">×{item.quantity}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
       </div>
     </Card>
   );

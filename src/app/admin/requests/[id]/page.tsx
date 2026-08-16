@@ -89,7 +89,7 @@ export default async function ReviewRequestPage({
         </Card>
 
         <ReviewForm
-          equipment={parsed?.equipment ?? []}
+          details={parsed?.details ?? { items: [], notes: [] }}
           requestId={request.id}
           parsed={parsed}
           priceList={(priceList ?? []) as PriceListItem[]}

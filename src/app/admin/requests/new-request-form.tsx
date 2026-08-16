@@ -9,7 +9,7 @@ import {
   buttonClass,
   inputClass,
 } from "@/components/ui";
-import type { EquipmentItem } from "@/lib/intake/workbook";
+import type { SheetDetails } from "@/lib/intake/workbook";
 import { type RequestState, createRequest } from "./actions";
 
 const EMPTY: RequestState = {};
@@ -26,7 +26,7 @@ function Submit() {
 interface SheetState {
   fileName: string;
   text: string;
-  equipment: EquipmentItem[];
+  details: SheetDetails;
   sheetsUsed: string[];
 }
 
@@ -76,7 +76,7 @@ export function NewRequestForm() {
       setSheet({
         fileName: file.name,
         text: result.text,
-        equipment: result.equipment,
+        details: result.details,
         sheetsUsed: result.sheetsUsed,
       });
     } catch (cause) {
@@ -126,16 +126,17 @@ export function NewRequestForm() {
               <p className="text-sm font-medium text-slate-900">{sheet.fileName}</p>
               <p className="mt-0.5 text-xs text-slate-500">
                 Read {sheet.sheetsUsed.join(", ") || "no sheets"} ·{" "}
-                {sheet.equipment.length > 0
-                  ? `${sheet.equipment.length} parts found`
-                  : "no parts table found"}
+                {sheet.details.items.length > 0
+                  ? `${sheet.details.items.length} items found`
+                  : "no items found"}
+                {sheet.details.notes.length > 0 ? " · notes found" : ""}
               </p>
               {/* The extracted text travels as a form field, not the file. */}
               <input type="hidden" name="sheet_text" value={sheet.text} />
               <input
                 type="hidden"
-                name="equipment"
-                value={JSON.stringify(sheet.equipment)}
+                name="details"
+                value={JSON.stringify(sheet.details)}
               />
               <input type="hidden" name="sheet_name" value={sheet.fileName} />
             </div>

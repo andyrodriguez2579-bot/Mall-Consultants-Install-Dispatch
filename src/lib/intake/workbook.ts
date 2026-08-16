@@ -93,80 +93,132 @@ function rowToLines(row: unknown[]): string[] {
   return lines;
 }
 
+
 // ---------------------------------------------------------------------------
-// Equipment
+// The sections that describe the job
 // ---------------------------------------------------------------------------
 
-export interface EquipmentItem {
-  /** The machine or assembly the parts belong to, when the sheet groups them. */
-  group: string | null;
-  partNumber: string;
+/**
+ * What the sheet is actually asking for, by section.
+ *
+ * The INSTALL sheet carries three lists that matter and one that does not. The
+ * "Product # / Part Description / Quantity" table off to the right is the parts
+ * set for a conveyor rental, marked "not supplied" -- it is reference material
+ * printed on every copy of the form, identical whatever the job, and reading it
+ * as this job's equipment produces two dozen bolts and curtain hooks nobody
+ * ordered.
+ *
+ * The real request lives in columns 0-4, under headed sections: what is being
+ * installed, what dispenser equipment goes with it, which chemicals are in use,
+ * and a free-text note that is usually the clearest statement of the job.
+ */
+export type SheetSection = "install" | "dispenser_equipment" | "chemicals";
+
+export interface SheetItem {
+  section: SheetSection;
+  /** The row's own label -- "Dispenser(s)", "Racks & Equipment", "FLOOR CLEANERS". */
+  category: string;
+  /** Leading item number, where the cell begins with one. */
+  code: string | null;
   description: string;
   quantity: number | null;
 }
 
-const PART_NUMBER = /^\d{5,10}$/;
-/** Sheets carry the count in the description -- "Short Curtain (2)". */
-const TRAILING_COUNT = /\s*\((\d{1,3})\)\s*$/;
+export interface SheetDetails {
+  items: SheetItem[];
+  notes: string[];
+  /**
+   * The customer's email, which the header block carries but the job record
+   * has no column for. Kept here so it can reach the site instructions rather
+   * than being lost between the sheet and the contractor.
+   */
+  customerEmail?: string | null;
+}
 
-const headerIndex = (row: unknown[], match: RegExp): number =>
-  row.findIndex((cell) => match.test(cellText(cell)));
+const EMAIL_LABEL = /^customer\s+e-?mail\b/i;
+const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]{2,}/;
+
+const SECTION_HEADINGS: Array<{ match: RegExp; section: SheetSection | "notes" }> = [
+  { match: /^products?\s+being\s+used/i, section: "chemicals" },
+  { match: /^areas?\s+of\s+install/i, section: "install" },
+  { match: /^dm\s+dispenser\s+equipment/i, section: "dispenser_equipment" },
+  { match: /^notes\b/i, section: "notes" },
+];
+
+/** Column pairs: a label, then its value. The quantity column serves the second. */
+const PAIRS: Array<{ label: number; value: number; quantity: number | null }> = [
+  { label: 0, value: 1, quantity: null },
+  { label: 2, value: 3, quantity: 4 },
+];
+
+/** "53000642 A-PROGRAM" -> code and description. */
+const CODED_ITEM = /^(\d{5,10})\s+(.+)$/;
 
 /**
- * The parts table, read by column rather than from the flattened text.
- *
- * The sheet repeats its "Product # / Part Description / Quantity" header once
- * per machine option, with the machine named on its own row above the parts, so
- * the table is walked header by header rather than assumed to appear once.
+ * Printed on every form, so it says nothing about this job.
+ * A blank template's own placeholder text is not a note.
  */
-export function readEquipment(rows: unknown[][]): EquipmentItem[] {
-  const items: EquipmentItem[] = [];
+const BOILERPLATE = [
+  /^please see information enclosed/i,
+  /^\*+completed by/i,
+  /^quantity$/i,
+];
+
+const isHeadingCell = (text: string): boolean =>
+  SECTION_HEADINGS.some((h) => h.match.test(text)) || /\*\*completed by/i.test(text);
+
+export function readSheetDetails(rows: unknown[][]): SheetDetails {
+  const items: SheetItem[] = [];
+  const notes: string[] = [];
   const seen = new Set<string>();
-  let partCol = -1;
-  let descCol = -1;
-  let qtyCol = -1;
-  let group: string | null = null;
+  let section: SheetSection | "notes" | null = null;
+  let customerEmail: string | null = null;
 
   for (const row of rows) {
-    const maybePart = headerIndex(row, /^product\s*#?$/i);
-    if (maybePart !== -1) {
-      partCol = maybePart;
-      descCol = headerIndex(row, /^part\s+description$/i);
-      qtyCol = headerIndex(row, /^quantity$/i);
-      group = null;
+    const first = cellText(row[0]);
+
+    if (customerEmail === null && EMAIL_LABEL.test(first)) {
+      const found = EMAIL.exec(cellText(row[1]));
+      if (found) customerEmail = found[0];
+    }
+
+    const heading = SECTION_HEADINGS.find((h) => h.match.test(first));
+    if (heading) {
+      section = heading.section;
+      continue;
+    }
+    if (section === null) continue;
+
+    if (section === "notes") {
+      // The notes block runs until the next heading; a row with content in the
+      // other columns is a different section starting, not a note.
+      if (first === "" || isHeadingCell(first)) continue;
+      if (BOILERPLATE.some((b) => b.test(first))) continue;
+      notes.push(first);
       continue;
     }
 
-    if (partCol === -1 || descCol === -1) continue;
+    for (const pair of PAIRS) {
+      const category = cellText(row[pair.label]);
+      const raw = cellText(row[pair.value]);
+      if (!category || !raw || isHeadingCell(category)) continue;
 
-    const part = cellText(row[partCol]);
-    const desc = cellText(row[descCol]);
+      const coded = CODED_ITEM.exec(raw);
+      const code = coded ? coded[1]! : null;
+      const description = coded ? coded[2]!.trim() : raw;
 
-    // A name in the part column with nothing beside it heads the next block.
-    if (part !== "" && desc === "" && !PART_NUMBER.test(part)) {
-      group = part;
-      continue;
+      const quantityCell = pair.quantity === null ? "" : cellText(row[pair.quantity]);
+      const quantity = /^\d{1,4}$/.test(quantityCell) ? Number(quantityCell) : null;
+
+      const key = `${section}|${category}|${code ?? ""}|${description}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      items.push({ section, category, code, description, quantity });
     }
-
-    if (!PART_NUMBER.test(part) || desc === "") continue;
-
-    const explicit = qtyCol === -1 ? "" : cellText(row[qtyCol]);
-    const trailing = TRAILING_COUNT.exec(desc);
-    const quantity = explicit !== "" && /^\d+$/.test(explicit)
-      ? Number(explicit)
-      : trailing
-        ? Number(trailing[1])
-        : null;
-
-    const description = desc.replace(TRAILING_COUNT, "").trim();
-    const key = `${group ?? ""}|${part}|${description}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    items.push({ group, partNumber: part, description, quantity });
   }
 
-  return items;
+  return { items, notes, customerEmail };
 }
 
 function sheetRows(sheet: XLSX.WorkSheet): unknown[][] {
@@ -208,8 +260,8 @@ export interface WorkbookReadResult {
   sheetsUsed: string[];
   /** Sheets judged to be catalogue and left out. */
   sheetsSkipped: string[];
-  /** The parts table, read from the grid rather than the flattened text. */
-  equipment: EquipmentItem[];
+  /** What the sheet asks for, read from the grid rather than the flattened text. */
+  details: SheetDetails;
   truncated: boolean;
 }
 
@@ -221,7 +273,9 @@ export function readWorkbook(data: ArrayBuffer | Uint8Array): WorkbookReadResult
   const used: string[] = [];
   const skipped = workbook.SheetNames.filter((n) => !wanted.includes(n));
   const blocks: string[] = [];
-  const equipment: EquipmentItem[] = [];
+  const items: SheetItem[] = [];
+  const notes: string[] = [];
+  let customerEmail: string | null = null;
   let length = 0;
   let truncated = false;
 
@@ -230,7 +284,10 @@ export function readWorkbook(data: ArrayBuffer | Uint8Array): WorkbookReadResult
     if (!sheet) continue;
 
     const rows = sheetRows(sheet);
-    equipment.push(...readEquipment(rows));
+    const detail = readSheetDetails(rows);
+    items.push(...detail.items);
+    notes.push(...detail.notes);
+    customerEmail = customerEmail ?? detail.customerEmail ?? null;
     const lines = rows.flatMap(rowToLines).filter((line) => line !== "");
     if (lines.length === 0) {
       skipped.push(name);
@@ -272,7 +329,7 @@ export function readWorkbook(data: ArrayBuffer | Uint8Array): WorkbookReadResult
     text: blocks.join("\n\n"),
     sheetsUsed: used,
     sheetsSkipped: skipped,
-    equipment,
+    details: { items, notes, customerEmail },
     truncated,
   };
 }

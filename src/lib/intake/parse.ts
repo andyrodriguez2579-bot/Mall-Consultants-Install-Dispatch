@@ -33,7 +33,7 @@ export interface SuggestedLineItem {
   evidence: string;
 }
 
-import type { EquipmentItem } from "./workbook";
+import type { SheetDetails } from "./workbook";
 
 export interface ParsedRequest {
   customer_name: ExtractedField<string> | null;
@@ -51,11 +51,11 @@ export interface ParsedRequest {
   scope: string;
   suggestedItems: SuggestedLineItem[];
   /**
-   * Parts read from the install sheet's grid, when the request came in as a
+   * What the install sheet asked for, when the request came in as a
    * spreadsheet. Added by the intake action rather than by the text parser,
-   * because the parts table only survives being read column by column.
+   * because these sections only survive being read column by column.
    */
-  equipment?: EquipmentItem[];
+  details?: SheetDetails;
   /** Fields the parser could not fill, for the review screen to highlight. */
   missing: string[];
 }
