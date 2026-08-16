@@ -5,23 +5,60 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { parseInstallRequest } from "@/lib/intake/parse";
-import {
-  type EquipmentItem,
-  isSpreadsheetFilename,
-  readWorkbook,
-} from "@/lib/intake/workbook";
+import type { EquipmentItem } from "@/lib/intake/workbook";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, PriceListItem } from "@/lib/types";
 import { readPricingForm, upsertJobPricing, validatePricing } from "@/lib/pricing-form";
 import { fieldErrors, jobFormSchema, readMulti } from "@/lib/validation";
 
+/** Matches the reader's own cap; anything larger did not come from a sheet. */
+const MAX_SHEET_CHARS = 80_000;
+
 /**
- * Survey workbooks run to several megabytes because of the embedded product
- * photographs. Kept in step with `serverActions.bodySizeLimit` in
- * next.config.ts, which is what actually rejects an oversized upload -- this
- * check exists to say so in words rather than as a framework error.
+ * The parts list, as the browser extracted it.
+ *
+ * The workbook is read client-side -- Vercel caps every request at 4.5 MB and
+ * these files are larger -- so this arrives as JSON from the page rather than
+ * from a file the server read itself. It is shaped and bounded here rather than
+ * stored as received: it is written into a job's site instructions, which a
+ * contractor is then sent.
  */
-const MAX_UPLOAD_BYTES = 20 * 1_048_576;
+function readEquipmentField(raw: FormDataEntryValue | null): EquipmentItem[] {
+  if (typeof raw !== "string" || !raw.trim()) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  const str = (v: unknown, max: number): string =>
+    typeof v === "string" ? v.slice(0, max) : "";
+
+  return parsed.slice(0, 500).flatMap((row): EquipmentItem[] => {
+    if (typeof row !== "object" || row === null) return [];
+    const item = row as Record<string, unknown>;
+    const description = str(item.description, 200);
+    const partNumber = str(item.partNumber, 40);
+    if (!description && !partNumber) return [];
+
+    const quantity =
+      typeof item.quantity === "number" && Number.isFinite(item.quantity) && item.quantity >= 0
+        ? Math.min(Math.round(item.quantity), 9999)
+        : null;
+
+    return [
+      {
+        group: str(item.group, 120) || null,
+        partNumber,
+        description,
+        quantity,
+      },
+    ];
+  });
+}
 
 export interface RequestState {
   error?: string;
@@ -43,42 +80,24 @@ export async function createRequest(
 
   const pasted = formData.get("raw_text");
   const source = formData.get("source");
-  const upload = formData.get("workbook");
+  const sheetText = formData.get("sheet_text");
 
   let rawText = typeof pasted === "string" ? pasted.trim() : "";
   let equipment: EquipmentItem[] = [];
 
-  if (upload instanceof File && upload.size > 0) {
-    if (!isSpreadsheetFilename(upload.name)) {
+  if (typeof sheetText === "string" && sheetText.trim()) {
+    if (sheetText.length > MAX_SHEET_CHARS) {
       return {
         errors: {
-          workbook: `${upload.name} is not a spreadsheet — expected .xlsb, .xlsx, .xlsm, .xls or .csv.`,
+          sheet_text: "That sheet is far larger than an install request should be.",
         },
       };
     }
-    if (upload.size > MAX_UPLOAD_BYTES) {
-      const mb = (upload.size / 1_048_576).toFixed(1);
-      return {
-        errors: {
-          workbook: `That file is ${mb} MB; the limit is ${MAX_UPLOAD_BYTES / 1_048_576} MB.`,
-        },
-      };
-    }
-
-    try {
-      const read = readWorkbook(await upload.arrayBuffer());
-      if (!read.text.trim()) {
-        return { errors: { workbook: "That workbook has no readable install sheet." } };
-      }
-      equipment = read.equipment;
-      // The covering email is kept, and kept second. The extractor falls back
-      // to scanning the whole document for an address, and a "ship equipment
-      // to" line in the email must not outrank the job site on the sheet.
-      rawText = rawText ? `${read.text}\n\n--- covering email ---\n${rawText}` : read.text;
-    } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : "unreadable";
-      return { errors: { workbook: `Could not read that workbook: ${detail}` } };
-    }
+    equipment = readEquipmentField(formData.get("equipment"));
+    // The covering email is kept, and kept second. The extractor falls back
+    // to scanning the whole document for an address, and a "ship equipment
+    // to" line in the email must not outrank the job site on the sheet.
+    rawText = rawText ? `${sheetText}\n\n--- covering email ---\n${rawText}` : sheetText.trim();
   }
 
   if (rawText.length < 10) {
@@ -101,12 +120,7 @@ export async function createRequest(
     .from("install_requests")
     .insert({
       raw_text: rawText,
-      source:
-        typeof source === "string" && source
-          ? source
-          : upload instanceof File && upload.size > 0
-            ? "spreadsheet"
-            : "paste",
+      source: typeof source === "string" && source ? source : "paste",
       parsed: { ...parsed, equipment } as unknown as Record<string, unknown>,
       created_by: admin.id,
     })

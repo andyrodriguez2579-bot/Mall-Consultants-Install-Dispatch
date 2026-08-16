@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
   Card,
@@ -9,6 +9,7 @@ import {
   buttonClass,
   inputClass,
 } from "@/components/ui";
+import type { EquipmentItem } from "@/lib/intake/workbook";
 import { type RequestState, createRequest } from "./actions";
 
 const EMPTY: RequestState = {};
@@ -22,8 +23,71 @@ function Submit() {
   );
 }
 
+interface SheetState {
+  fileName: string;
+  text: string;
+  equipment: EquipmentItem[];
+  sheetsUsed: string[];
+}
+
 export function NewRequestForm() {
   const [state, action] = useActionState(createRequest, EMPTY);
+  const [sheet, setSheet] = useState<SheetState | null>(null);
+  const [reading, setReading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+
+  /**
+   * The workbook is read here, in the browser, and only the extracted text is
+   * sent on.
+   *
+   * These files run to several megabytes because of the embedded product
+   * photographs, and every request to a Vercel deployment is capped at 4.5 MB
+   * -- a platform limit, not a setting -- so uploading one returns 413 before
+   * any code of ours runs. Reading it here sidesteps the limit entirely: what
+   * reaches the server is a few kilobytes of text.
+   *
+   * The parser is loaded on demand so its weight is only paid by someone who
+   * actually attaches a sheet.
+   */
+  async function handleFile(file: File | undefined) {
+    setReadError(null);
+    if (!file) {
+      setSheet(null);
+      return;
+    }
+
+    setReading(true);
+    try {
+      const { readWorkbook, isSpreadsheetFilename } = await import("@/lib/intake/workbook");
+
+      if (!isSpreadsheetFilename(file.name)) {
+        setSheet(null);
+        setReadError(`${file.name} is not a spreadsheet — expected .xlsb, .xlsx, .xlsm, .xls or .csv.`);
+        return;
+      }
+
+      const result = readWorkbook(await file.arrayBuffer());
+      if (!result.text.trim()) {
+        setSheet(null);
+        setReadError("That workbook has no readable install sheet.");
+        return;
+      }
+
+      setSheet({
+        fileName: file.name,
+        text: result.text,
+        equipment: result.equipment,
+        sheetsUsed: result.sheetsUsed,
+      });
+    } catch (cause) {
+      setSheet(null);
+      setReadError(
+        `Could not read that workbook: ${cause instanceof Error ? cause.message : "unreadable"}`,
+      );
+    } finally {
+      setReading(false);
+    }
+  }
 
   return (
     <Card>
@@ -43,13 +107,38 @@ export function NewRequestForm() {
             </span>
             <input
               type="file"
-              name="workbook"
               accept=".xlsb,.xlsx,.xlsm,.xls,.csv"
+              onChange={(e) => void handleFile(e.target.files?.[0])}
               className="mt-2 block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
             />
           </label>
-          {state.errors?.workbook ? (
-            <p className="mt-2 text-xs text-rose-600">{state.errors.workbook}</p>
+
+          {reading ? (
+            <p className="mt-2 text-xs text-slate-500">Reading the sheet…</p>
+          ) : null}
+          {readError ? <p className="mt-2 text-xs text-rose-600">{readError}</p> : null}
+          {state.errors?.sheet_text ? (
+            <p className="mt-2 text-xs text-rose-600">{state.errors.sheet_text}</p>
+          ) : null}
+
+          {sheet ? (
+            <div className="mt-3 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
+              <p className="text-sm font-medium text-slate-900">{sheet.fileName}</p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Read {sheet.sheetsUsed.join(", ") || "no sheets"} ·{" "}
+                {sheet.equipment.length > 0
+                  ? `${sheet.equipment.length} parts found`
+                  : "no parts table found"}
+              </p>
+              {/* The extracted text travels as a form field, not the file. */}
+              <input type="hidden" name="sheet_text" value={sheet.text} />
+              <input
+                type="hidden"
+                name="equipment"
+                value={JSON.stringify(sheet.equipment)}
+              />
+              <input type="hidden" name="sheet_name" value={sheet.fileName} />
+            </div>
           ) : null}
         </div>
 
