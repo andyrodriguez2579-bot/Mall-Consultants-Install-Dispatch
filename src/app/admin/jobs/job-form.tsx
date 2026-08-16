@@ -7,6 +7,7 @@ import {
   CardHeader,
   ErrorBanner,
   Field,
+  FormErrors,
   SuccessBanner,
   buttonClass,
   inputClass,
@@ -86,6 +87,7 @@ export function JobForm({
       {job ? <input type="hidden" name="job_id" value={job.id} /> : null}
 
       {state.error ? <ErrorBanner>{state.error}</ErrorBanner> : null}
+      <FormErrors errors={state.errors} />
       {state.success ? <SuccessBanner>{state.success}</SuccessBanner> : null}
 
       <Card>
@@ -269,6 +271,7 @@ export function JobForm({
         </div>
       </Card>
 
+      {err.lines ? <p className="text-xs text-rose-600">{err.lines}</p> : null}
       <PricingPanel
         priceList={priceList}
         defaults={pricingDefaults}

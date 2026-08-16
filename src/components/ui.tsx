@@ -110,6 +110,37 @@ export function EmptyState({
  * than as a toast -- a contractor who taps Accept and loses the race needs to
  * see why on the page they are already looking at.
  */
+/**
+ * Every validation error on a form, in one place.
+ *
+ * Field errors are rendered beside their field, which works only for fields
+ * that have somewhere to render one. An error whose key nothing displays --
+ * because the field moved, or was replaced by a list -- makes the submit button
+ * do nothing at all, with no explanation. Listing them all here means a form
+ * can fail to save, but it can never fail silently.
+ */
+export function FormErrors({ errors }: { errors?: Record<string, string> }) {
+  const messages = [...new Set(Object.values(errors ?? {}))];
+  if (messages.length === 0) return null;
+
+  return (
+    <ErrorBanner>
+      {messages.length === 1 ? (
+        messages[0]
+      ) : (
+        <>
+          <p className="font-medium">Please fix the following:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {messages.map((m) => (
+              <li key={m}>{m}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </ErrorBanner>
+  );
+}
+
 export function ErrorBanner({ children }: { children: ReactNode }) {
   return (
     <div

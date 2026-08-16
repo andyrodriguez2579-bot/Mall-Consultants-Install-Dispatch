@@ -7,6 +7,7 @@ import {
   CardHeader,
   ErrorBanner,
   Field,
+  FormErrors,
   buttonClass,
   inputClass,
 } from "@/components/ui";
@@ -101,6 +102,7 @@ export function ReviewForm({
         <input type="hidden" name="request_id" value={requestId} />
 
         {state.error ? <ErrorBanner>{state.error}</ErrorBanner> : null}
+        <FormErrors errors={state.errors} />
 
         <Card>
           <CardHeader title="Job detail" description="Correct anything the parser got wrong." />
@@ -235,6 +237,7 @@ export function ReviewForm({
           <SheetSummary details={details} />
         ) : null}
 
+        {err.lines ? <p className="text-xs text-rose-600">{err.lines}</p> : null}
         <PricingPanel
           priceList={priceList}
           commuterMiles={commuterMiles}
