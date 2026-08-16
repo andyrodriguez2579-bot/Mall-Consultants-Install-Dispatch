@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { PriceListItem, Skill } from "@/lib/types";
+import type { AppSetting, PriceListItem, Skill } from "@/lib/types";
 import { JobForm } from "../job-form";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export default async function NewJobPage() {
   await requireAdmin();
   const supabase = await createClient();
 
-  const [{ data: skills }, { data: priceList }] = await Promise.all([
+  const [{ data: skills }, { data: priceList }, { data: settings }] = await Promise.all([
     supabase
       .from("skills")
       .select("id, slug, name, description, is_active")
@@ -22,7 +22,14 @@ export default async function NewJobPage() {
       .eq("is_active", true)
       .order("sort_order")
       .order("name"),
+    supabase.from("app_settings").select("*"),
   ]);
+
+  // The pricing form now submits the split and the mileage rate explicitly, so
+  // the current settings have to be seeded into it. Without this a new job
+  // would be priced at the component's fallbacks rather than at whatever
+  // Settings says.
+  const byKey = Object.fromEntries(((settings ?? []) as AppSetting[]).map((s) => [s.key, s]));
 
   return (
     <div className="space-y-5">
@@ -39,6 +46,11 @@ export default async function NewJobPage() {
       <JobForm
         skills={(skills ?? []) as Skill[]}
         priceList={(priceList ?? []) as PriceListItem[]}
+        pricingDefaults={{
+          contractorBps: Number(byKey.contractor_percentage_bps?.value ?? 4500),
+          mileageRate: Number(byKey.mileage_rate?.value ?? 0.725),
+        }}
+        commuterMiles={Number(byKey.commuter_deduction_miles?.value ?? 30)}
       />
     </div>
   );

@@ -48,13 +48,38 @@ export interface PricingSubmission {
     task_count: number;
     additional_labor_cents: number;
     additional_labor_reason: string | null;
+    /**
+     * Per job, so a difficult install can pay above the standard rate without
+     * moving every other job. Undefined when the form does not supply it,
+     * which leaves the column default -- the global setting -- in place.
+     */
+    contractor_percentage_bps?: number;
   };
+  /**
+   * A percentage was typed but could not be read. Distinguished from "not
+   * supplied" so a typo becomes an error the administrator sees rather than a
+   * silent fall back to the standard rate.
+   */
+  invalidPercentage: boolean;
+}
+
+/** A percentage typed as "45" or "52.5", read as basis points. */
+function percentageBps(formData: FormData, name: string): number | undefined {
+  const raw = formData.get(name);
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
+  return Math.round(n * 100);
 }
 
 export function readPricingForm(formData: FormData): PricingSubmission {
   const additional = cents(formData, "additional_labor");
+  const rawShare = formData.get("contractor_percentage");
+  const shareSupplied = typeof rawShare === "string" && rawShare.trim() !== "";
+  const bps = percentageBps(formData, "contractor_percentage");
 
   return {
+    invalidPercentage: shareSupplied && bps === undefined,
     jobFields: {
       service_item_id: text(formData, "service_item_id"),
       service_type: text(formData, "service_type"),
@@ -72,6 +97,7 @@ export function readPricingForm(formData: FormData): PricingSubmission {
       task_count: num(formData, "task_count", 1),
       additional_labor_cents: additional,
       additional_labor_reason: additional > 0 ? text(formData, "additional_labor_reason") : null,
+      ...(bps === undefined ? {} : { contractor_percentage_bps: bps }),
     },
   };
 }
@@ -82,6 +108,9 @@ export function validatePricing(submission: PricingSubmission): Record<string, s
   const { customer_labor_price_cents, task_count, additional_labor_cents, additional_labor_reason } =
     submission.pricingFields;
 
+  if (submission.invalidPercentage) {
+    errors.contractor_percentage = "The contractor share must be a percentage between 0 and 100.";
+  }
   if (customer_labor_price_cents <= 0) {
     errors.customer_labor_price = "Set the customer labor price for this service.";
   }

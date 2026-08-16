@@ -4,7 +4,7 @@ import { Card, CardHeader, InfoBanner } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
-import type { InstallRequest, PriceListItem, Skill } from "@/lib/types";
+import type { AppSetting, InstallRequest, PriceListItem, Skill } from "@/lib/types";
 import type { ParsedRequest } from "@/lib/intake/parse";
 import { ReviewForm } from "./review-form";
 
@@ -32,7 +32,7 @@ export default async function ReviewRequestPage({
     redirect(`/admin/jobs/${request.job_id}`);
   }
 
-  const [{ data: priceList }, { data: skills }] = await Promise.all([
+  const [{ data: priceList }, { data: skills }, { data: settings }] = await Promise.all([
     supabase
       .from("price_list_items")
       .select("*")
@@ -44,7 +44,10 @@ export default async function ReviewRequestPage({
       .select("id, slug, name, description, is_active")
       .eq("is_active", true)
       .order("name"),
+    supabase.from("app_settings").select("*"),
   ]);
+
+  const byKey = Object.fromEntries(((settings ?? []) as AppSetting[]).map((s) => [s.key, s]));
 
   const parsed = request.parsed as unknown as ParsedRequest;
 
@@ -90,6 +93,9 @@ export default async function ReviewRequestPage({
           parsed={parsed}
           priceList={(priceList ?? []) as PriceListItem[]}
           skills={(skills ?? []) as Skill[]}
+          contractorBps={Number(byKey.contractor_percentage_bps?.value ?? 4500)}
+          mileageRate={Number(byKey.mileage_rate?.value ?? 0.725)}
+          commuterMiles={Number(byKey.commuter_deduction_miles?.value ?? 30)}
         />
       </div>
     </div>

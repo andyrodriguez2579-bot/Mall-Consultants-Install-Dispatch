@@ -78,7 +78,18 @@ export function PricingPanel({
     defaults.otherExpensesCents ? (defaults.otherExpensesCents / 100).toFixed(2) : "",
   );
 
-  const bps = defaults.contractorBps ?? 4500;
+  /**
+   * The contractor's share is per job, not global. A difficult install can be
+   * paid above the standard rate without changing what the customer is charged
+   * or what every other job pays -- the increase comes out of the Mall
+   * Consultants share.
+   */
+  const [share, setShare] = useState(String(bpsToPercent(defaults.contractorBps ?? 4500)));
+  const shareNumber = Number(share);
+  const bps =
+    Number.isFinite(shareNumber) && shareNumber >= 0 && shareNumber <= 100
+      ? Math.round(shareNumber * 100)
+      : 4500;
 
   const byCategory = useMemo(() => {
     const groups = new Map<string, PriceListItem[]>();
@@ -191,6 +202,43 @@ export function PricingPanel({
             </Field>
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field
+              label="Contractor share for this job"
+              required
+              hint="Percent of labor revenue. Comes out of the Mall Consultants share, not the customer price."
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  name="contractor_percentage"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.5"
+                  value={share}
+                  onChange={(e) => setShare(e.target.value)}
+                  disabled={disabled}
+                  required
+                  className={inputClass}
+                />
+                <span className="text-sm text-slate-500">%</span>
+              </div>
+            </Field>
+            <div className="sm:col-span-2 sm:self-end sm:pb-2">
+              {bps !== (defaults.contractorBps ?? 4500) ? (
+                <p className="text-xs text-amber-800">
+                  Above your standard {bpsToPercent(defaults.contractorBps ?? 4500)}%. The
+                  customer still pays the same amount; the difference comes off your share.
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Your standard rate. Raise it for a difficult install — the job keeps its
+                  own percentage, so nothing else changes.
+                </p>
+              )}
+            </div>
+          </div>
+
           {toCents(additional) > 0 ? (
             <Field label="Reason for the additional labor" required>
               <input
@@ -211,6 +259,9 @@ export function PricingPanel({
           description="Paid to the contractor in full. Never part of the labor split."
         />
         <div className="grid gap-4 p-4 sm:grid-cols-4 sm:p-5">
+          {/* Miles driven are only known after the trip, so they stay editable
+              after dispatch. The rate they are paid at does not -- it is frozen
+              with the labor agreement. */}
           <Field label="Contractor miles" hint="Odometer end minus start.">
             <input
               name="contractor_miles"
@@ -219,7 +270,6 @@ export function PricingPanel({
               step="0.1"
               value={miles}
               onChange={(e) => setMiles(e.target.value)}
-              disabled={disabled}
               className={inputClass}
             />
           </Field>
@@ -231,7 +281,6 @@ export function PricingPanel({
               step="0.1"
               value={excluded}
               onChange={(e) => setExcluded(e.target.value)}
-              disabled={disabled}
               className={inputClass}
             />
           </Field>
@@ -280,11 +329,11 @@ export function PricingPanel({
             ] as const
           ).map(([name, label, value, setter]) => (
             <Field key={name} label={label}>
+              {/* Receipts arrive after the work, so these stay editable too. */}
               <input
                 name={name}
                 value={value}
                 onChange={(e) => setter(e.target.value)}
-                disabled={disabled}
                 inputMode="decimal"
                 placeholder="0.00"
                 className={inputClass}

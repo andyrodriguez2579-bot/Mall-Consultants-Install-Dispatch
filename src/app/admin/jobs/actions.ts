@@ -134,7 +134,11 @@ export async function updateJob(_prev: FormState, formData: FormData): Promise<F
 
   const editable = existing.status === "draft" || existing.status === "ready";
   const pricing = readPricingForm(formData);
-  const pricingErrors = validatePricing(pricing);
+
+  // Once a job is dispatched the labor inputs are locked, so the form does not
+  // submit them. Validating them anyway would reject an edit whose only purpose
+  // is to record the miles actually driven.
+  const pricingErrors = editable ? validatePricing(pricing) : null;
   if (pricingErrors) return { errors: pricingErrors };
 
   // Mileage and reimbursables stay editable after dispatch -- they are only

@@ -70,11 +70,17 @@ export function ReviewForm({
   parsed,
   priceList,
   skills,
+  contractorBps,
+  mileageRate,
+  commuterMiles,
 }: {
   requestId: string;
   parsed: ParsedRequest;
   priceList: PriceListItem[];
   skills: Skill[];
+  contractorBps: number;
+  mileageRate: number;
+  commuterMiles: number;
 }) {
   const [state, action] = useActionState(convertRequestToJob, EMPTY);
   const err = state.errors ?? {};
@@ -215,10 +221,13 @@ export function ReviewForm({
 
         <PricingPanel
           priceList={priceList}
+          commuterMiles={commuterMiles}
           defaults={{
             serviceItemId: suggested?.id ?? null,
             customerLaborPriceCents: suggested?.customer_labor_price_cents,
             taskCount: firstSuggestion?.quantity ?? 1,
+            contractorBps,
+            mileageRate,
           }}
         />
         {err.customer_labor_price ? (
