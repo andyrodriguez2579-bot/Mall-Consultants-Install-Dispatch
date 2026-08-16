@@ -13,6 +13,71 @@ export interface ContractorState {
   success?: string;
 }
 
+type ContractorInput = {
+  full_name: string;
+  phone: string;
+  email: string;
+  company_name: string | null;
+  max_travel_miles: number | null;
+};
+
+/**
+ * The email or phone is already taken. Work out by whom, and finish the job if
+ * the answer is "a contractor record that was never completed".
+ *
+ * Re-entering the same details is the natural response to a creation that
+ * appeared to fail, and it must not be a dead end: the address and the number
+ * are the contractor's real ones and cannot simply be swapped for others.
+ */
+async function repairExisting(
+  admin: ReturnType<typeof createAdminClient>,
+  input: ContractorInput,
+): Promise<ContractorState> {
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id, role, full_name")
+    .or(`email.eq.${input.email},phone.eq.${input.phone}`)
+    .maybeSingle<{ id: string; role: string; full_name: string }>();
+
+  if (!profile) {
+    return {
+      error:
+        "That email or phone number is already registered, but no profile exists for it. " +
+        "Use a different email and phone, or remove the account in Supabase → Authentication → Users.",
+    };
+  }
+
+  if (profile.role !== "contractor") {
+    return {
+      error: `That email or phone number belongs to the ${profile.role} account for ${profile.full_name}. A contractor needs their own email and mobile number.`,
+    };
+  }
+
+  const { data: existing } = await admin
+    .from("contractors")
+    .select("id")
+    .eq("id", profile.id)
+    .maybeSingle<{ id: string }>();
+
+  if (existing) {
+    return { error: `${profile.full_name} is already on the contractor list.` };
+  }
+
+  const { error } = await admin.from("contractors").insert({
+    id: profile.id,
+    status: "pending",
+    company_name: input.company_name,
+    max_travel_miles: input.max_travel_miles,
+  });
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/contractors");
+  return {
+    success: `${profile.full_name}'s record was incomplete and has been finished. Approve them to start dispatching.`,
+  };
+}
+
 /**
  * Create a contractor.
  *
@@ -49,12 +114,10 @@ export async function createContractor(
   });
 
   if (authError || !created?.user) {
-    const duplicate = /already|registered|exists/i.test(authError?.message ?? "");
-    return {
-      error: duplicate
-        ? "A user with that email or phone number already exists."
-        : (authError?.message ?? "Could not create the account."),
-    };
+    if (!/already|registered|exists/i.test(authError?.message ?? "")) {
+      return { error: authError?.message ?? "Could not create the account." };
+    }
+    return repairExisting(admin, parsed.data);
   }
 
   const userId = created.user.id;
@@ -74,12 +137,21 @@ export async function createContractor(
     return { error: profileError.message };
   }
 
-  await admin.from("contractors").insert({
+  // Checked, and rolled back on failure. Left unchecked this produced a login
+  // and a profile with no contractor record: invisible in every list, yet
+  // holding that email and phone number against any future attempt.
+  const { error: contractorError } = await admin.from("contractors").insert({
     id: userId,
     status: "pending",
     company_name: parsed.data.company_name,
     max_travel_miles: parsed.data.max_travel_miles,
   });
+
+  if (contractorError) {
+    await admin.from("profiles").delete().eq("id", userId);
+    await admin.auth.admin.deleteUser(userId);
+    return { error: contractorError.message };
+  }
 
   if (parsed.data.skill_ids.length > 0) {
     await admin

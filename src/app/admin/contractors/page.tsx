@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardHeader, EmptyState } from "@/components/ui";
+import { Card, CardHeader, EmptyState, ErrorBanner } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth";
 import { formatPhone } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
@@ -21,7 +21,7 @@ export default async function ContractorsPage() {
   await requireAdmin();
   const supabase = await createClient();
 
-  const [{ data: rows }, { data: skills }, { data: areas }] = await Promise.all([
+  const [{ data: rows, error: rowsError }, { data: skills }, { data: areas }] = await Promise.all([
     supabase
       .from("contractors")
       .select("*, profile:id(full_name, phone, email, is_active)")
@@ -40,6 +40,14 @@ export default async function ContractorsPage() {
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-bold text-slate-900">Contractors</h1>
+
+      {/* A failed query and an empty roster used to render identically, which
+          turns "the list is broken" into "nobody is here". Say which it is. */}
+      {rowsError ? (
+        <ErrorBanner>
+          Could not load contractors: {rowsError.message}
+        </ErrorBanner>
+      ) : null}
 
       {(["pending", "approved", "suspended"] as ContractorStatus[]).map((status) => {
         const group = byStatus(status);
