@@ -473,8 +473,13 @@ first, or messages will be filtered.
    `APP_BASE_URL` matters: it is what offer links point at. Without it, links
    fall back to the per-deployment `VERCEL_URL` and will not match your domain.
 
-3. Deploy. `vercel.json` registers the expiry sweep at `*/15 * * * *`; Vercel
+3. Deploy. `vercel.json` registers the expiry sweep at `0 13 * * *`; Vercel
    supplies the `CRON_SECRET` as a bearer token automatically.
+
+   Once daily is the most a Vercel Hobby account permits — anything more
+   frequent is rejected when the deployment is created, not at run time, so an
+   over-eager schedule blocks the whole deploy rather than degrading. On a paid
+   plan, tighten it to `*/15 * * * *` so the dashboard reflects expiry sooner.
 
 4. In Supabase → Authentication → URL Configuration, add your production domain
    to the redirect allow-list.
