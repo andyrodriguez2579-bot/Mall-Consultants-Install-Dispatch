@@ -23,7 +23,8 @@ export default async function PriceListPage() {
       <div>
         <h1 className="text-xl font-bold text-slate-900">Price list</h1>
         <p className="mt-1 text-sm text-slate-600">
-          What a contractor is paid per work item. Job totals are built from these.
+          What the customer is charged per work item, and how that splits. Job totals
+          are built from these.
         </p>
       </div>
 

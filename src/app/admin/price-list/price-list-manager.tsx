@@ -71,6 +71,7 @@ export function PriceListManager({ items }: { items: PriceListItem[] }) {
                     <div className="flex items-center gap-3">
                       <span className="text-right">
                         <span className="block text-sm font-semibold tabular-nums text-slate-900">
+                          <span className="font-normal text-slate-400">customer </span>
                           {formatMoney(item.customer_labor_price_cents)}
                           <span className="font-normal text-slate-400">/{item.unit}</span>
                         </span>
