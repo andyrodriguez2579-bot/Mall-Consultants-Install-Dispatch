@@ -67,8 +67,12 @@ export default function PrivacyPage() {
           </p>
           <p className="mt-2">
             You consent to these messages when you join our contractor roster and give
-            us your mobile number for that purpose. Message frequency varies with how
-            much work is available. Message and data rates may apply.
+            us your mobile number for that purpose, by signing the{" "}
+            <Link href="/contractor-sms-consent" className="font-medium text-blue-700">
+              contractor SMS consent form
+            </Link>
+            . Message frequency varies with how much work is available. Message and data
+            rates may apply.
           </p>
           <p className="mt-2">
             Reply <strong>STOP</strong> to any message to opt out, or turn off SMS
