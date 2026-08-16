@@ -25,7 +25,7 @@ if (files.length === 0) {
 }
 
 const header = `-- =============================================================================
--- MACA Consultants Install Dispatch -- COMPLETE DATABASE SETUP
+-- Mall Consultants Install Dispatch -- COMPLETE DATABASE SETUP
 -- =============================================================================
 -- Paste this whole file into the Supabase SQL Editor and press Run. It builds
 -- every table, security rule and pricing calculation the app needs, including

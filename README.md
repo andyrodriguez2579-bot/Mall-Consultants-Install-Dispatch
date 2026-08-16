@@ -1,4 +1,4 @@
-# MACA Consultants Install Dispatch
+# Mall Consultants Install Dispatch
 
 Private job-dispatch system for SSDC installations and other field work.
 
@@ -367,7 +367,7 @@ job in one window and paste the offer link into another to accept it:
 │ SMS (development mode — not sent)
 │ To: +17135550201
 ├────────────────────────────────────────────────────────────────
-│ MACA Consultants: new job MID-2026-1007
+│ Mall Consultants: new job MID-2026-1007
 │ SSDC retrofit — Galleria corridor C
 │ Houston, TX · Apr 20 · $680
 │ First to accept gets it. Expires in 4h.

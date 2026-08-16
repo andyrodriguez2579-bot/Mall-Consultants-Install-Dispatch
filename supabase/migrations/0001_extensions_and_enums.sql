@@ -10,7 +10,7 @@ create extension if not exists "pgcrypto" with schema extensions;
 -- Who can sign in, and with what powers.
 create type public.user_role as enum ('admin', 'contractor');
 
--- Lifecycle of a contractor's relationship with MACA Consultants. Only
+-- Lifecycle of a contractor's relationship with Mall Consultants. Only
 -- 'approved' contractors are ever eligible to receive or accept work.
 create type public.contractor_status as enum ('pending', 'approved', 'suspended');
 

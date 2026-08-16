@@ -9,6 +9,12 @@ import type { Job } from "@/lib/types";
  * every extra segment is billed, so messages stay tight. And the link is the
  * whole point of the message -- it goes last, where a phone will linkify it
  * cleanly without trailing punctuation.
+ *
+ * The offer message carries opt-out wording; the rest do not. Carriers expect
+ * it discoverable rather than on every message, and an offer is the one a
+ * contractor receives without having asked for anything first -- the others all
+ * follow an action they took. Putting it on every message would also push
+ * several of them into a second billed segment for no gain.
  */
 
 export interface OfferSmsInput {
@@ -35,6 +41,7 @@ export function offerSms({ job, link, expiresInHours }: OfferSmsInput): string {
     `${job.city}, ${job.state_code} · ${when} · ${pay}`,
     `First to accept gets it. Expires in ${expiresInHours}h.`,
     link,
+    "Reply STOP to opt out.",
   ].join("\n");
 }
 
