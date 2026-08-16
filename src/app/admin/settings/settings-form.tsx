@@ -45,8 +45,7 @@ export function SettingsForm({
 
   // A live worked example, so the effect of a change is visible before saving.
   const example = calculatePricing({
-    customerLaborPriceCents: 12000,
-    taskCount: 1,
+    lines: [{ unitPriceCents: 12000, quantity: 1 }],
     contractorBps: percentToBps(contractorPct),
     contractorMiles: 50,
     excludedMiles: Number(commuter) || 0,

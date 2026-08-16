@@ -239,9 +239,16 @@ export function ReviewForm({
           priceList={priceList}
           commuterMiles={commuterMiles}
           defaults={{
-            serviceItemId: suggested?.id ?? null,
-            customerLaborPriceCents: suggested?.customer_labor_price_cents,
-            taskCount: firstSuggestion?.quantity ?? 1,
+            lines: suggested
+              ? [
+                  {
+                    serviceItemId: suggested.id,
+                    description: suggested.name,
+                    unitPriceCents: suggested.customer_labor_price_cents,
+                    quantity: firstSuggestion?.quantity ?? 1,
+                  },
+                ]
+              : [],
             contractorBps,
             mileageRate,
           }}

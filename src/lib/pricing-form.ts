@@ -28,6 +28,14 @@ const text = (formData: FormData, name: string): string | null => {
   return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 };
 
+export interface PricingLineSubmission {
+  service_item_id: string | null;
+  description: string;
+  unit_price_cents: number;
+  quantity: number;
+  sort_order: number;
+}
+
 export interface PricingSubmission {
   /** Goes on `jobs` -- readable by the assigned or offered contractor. */
   jobFields: {
@@ -42,10 +50,10 @@ export interface PricingSubmission {
     hotel_cents: number;
     other_expenses_cents: number;
   };
+  /** Goes on `job_service_lines` -- administrators only. */
+  lines: PricingLineSubmission[];
   /** Goes on `job_pricing` -- administrators only. */
   pricingFields: {
-    customer_labor_price_cents: number;
-    task_count: number;
     additional_labor_cents: number;
     additional_labor_reason: string | null;
     /**
@@ -63,6 +71,43 @@ export interface PricingSubmission {
   invalidPercentage: boolean;
 }
 
+/**
+ * The service lines, read from the repeated fields the panel emits.
+ *
+ * FormData preserves document order, so the parallel lists line up by index --
+ * one entry per line for each of the four fields. Lines with no description and
+ * no price are dropped: the panel always shows at least one row, and an
+ * untouched row is not a service.
+ */
+function readLines(formData: FormData): PricingLineSubmission[] {
+  const ids = formData.getAll("line_service_item_id");
+  const descriptions = formData.getAll("line_description");
+  const prices = formData.getAll("line_unit_price");
+  const quantities = formData.getAll("line_quantity");
+
+  const lines: PricingLineSubmission[] = [];
+
+  for (let i = 0; i < descriptions.length; i += 1) {
+    const description = String(descriptions[i] ?? "").trim();
+    const unit = parseMoneyToCents(String(prices[i] ?? "")) ?? 0;
+    const quantityRaw = Number(String(quantities[i] ?? "1"));
+    const quantity = Number.isFinite(quantityRaw) && quantityRaw >= 0 ? quantityRaw : 0;
+
+    if (!description && unit === 0) continue;
+
+    const id = String(ids[i] ?? "").trim();
+    lines.push({
+      service_item_id: id || null,
+      description,
+      unit_price_cents: unit,
+      quantity,
+      sort_order: lines.length,
+    });
+  }
+
+  return lines;
+}
+
 /** A percentage typed as "45" or "52.5", read as basis points. */
 function percentageBps(formData: FormData, name: string): number | undefined {
   const raw = formData.get(name);
@@ -74,15 +119,19 @@ function percentageBps(formData: FormData, name: string): number | undefined {
 
 export function readPricingForm(formData: FormData): PricingSubmission {
   const additional = cents(formData, "additional_labor");
+  const lines = readLines(formData);
   const rawShare = formData.get("contractor_percentage");
   const shareSupplied = typeof rawShare === "string" && rawShare.trim() !== "";
   const bps = percentageBps(formData, "contractor_percentage");
 
   return {
     invalidPercentage: shareSupplied && bps === undefined,
+    lines,
     jobFields: {
-      service_item_id: text(formData, "service_item_id"),
-      service_type: text(formData, "service_type"),
+      // The job keeps the first line for display and for matching contractors
+      // by service; the priced detail lives on the lines themselves.
+      service_item_id: lines[0]?.service_item_id ?? null,
+      service_type: lines[0]?.description ?? null,
       contractor_miles: num(formData, "contractor_miles"),
       excluded_miles: num(formData, "excluded_miles"),
       mileage_rate: num(formData, "mileage_rate", 0.725),
@@ -93,8 +142,6 @@ export function readPricingForm(formData: FormData): PricingSubmission {
       other_expenses_cents: cents(formData, "other_expenses"),
     },
     pricingFields: {
-      customer_labor_price_cents: cents(formData, "customer_labor_price"),
-      task_count: num(formData, "task_count", 1),
       additional_labor_cents: additional,
       additional_labor_reason: additional > 0 ? text(formData, "additional_labor_reason") : null,
       ...(bps === undefined ? {} : { contractor_percentage_bps: bps }),
@@ -105,18 +152,23 @@ export function readPricingForm(formData: FormData): PricingSubmission {
 /** Validation the database also enforces, phrased for a person. */
 export function validatePricing(submission: PricingSubmission): Record<string, string> | null {
   const errors: Record<string, string> = {};
-  const { customer_labor_price_cents, task_count, additional_labor_cents, additional_labor_reason } =
-    submission.pricingFields;
+  const { additional_labor_cents, additional_labor_reason } = submission.pricingFields;
 
   if (submission.invalidPercentage) {
     errors.contractor_percentage = "The contractor share must be a percentage between 0 and 100.";
   }
-  if (customer_labor_price_cents <= 0) {
-    errors.customer_labor_price = "Set the customer labor price for this service.";
+  if (submission.lines.length === 0) {
+    errors.lines = "Add at least one service with a customer price.";
   }
-  if (task_count <= 0) {
-    errors.task_count = "There must be at least one task.";
-  }
+  submission.lines.forEach((line, index) => {
+    if (!line.description) {
+      errors.lines = `Service ${index + 1} needs a description.`;
+    } else if (line.unit_price_cents <= 0) {
+      errors.lines = `Service ${index + 1} needs a customer price.`;
+    } else if (line.quantity <= 0) {
+      errors.lines = `Service ${index + 1} needs a quantity above zero.`;
+    }
+  });
   if (additional_labor_cents > 0 && !additional_labor_reason) {
     errors.additional_labor_reason = "Additional labor needs a reason before it can be approved.";
   }
@@ -141,7 +193,7 @@ export async function upsertJobPricing(
   submission: PricingSubmission,
   adminId: string,
 ): Promise<{ error: string | null }> {
-  const { pricingFields } = submission;
+  const { pricingFields, lines } = submission;
   const approving = pricingFields.additional_labor_cents > 0;
 
   const { error } = await supabase.from("job_pricing").upsert(
@@ -154,5 +206,23 @@ export async function upsertJobPricing(
     { onConflict: "job_id" },
   );
 
-  return { error: error?.message ?? null };
+  if (error) return { error: error.message };
+
+  // Replaced wholesale rather than diffed. Lines carry no identity a person
+  // relies on, and a partial update that half-applied would leave a job priced
+  // at something nobody chose.
+  const { error: clearError } = await supabase
+    .from("job_service_lines")
+    .delete()
+    .eq("job_id", jobId);
+
+  if (clearError) return { error: clearError.message };
+
+  if (lines.length === 0) return { error: null };
+
+  const { error: linesError } = await supabase
+    .from("job_service_lines")
+    .insert(lines.map((line) => ({ job_id: jobId, ...line })));
+
+  return { error: linesError?.message ?? null };
 }

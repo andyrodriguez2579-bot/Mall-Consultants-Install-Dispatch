@@ -11,10 +11,15 @@ const toCents = (value: string): number => {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
 };
 
-export interface PricingDefaults {
+export interface PricingLineDefault {
   serviceItemId?: string | null;
-  customerLaborPriceCents?: number;
-  taskCount?: number;
+  description: string;
+  unitPriceCents: number;
+  quantity: number;
+}
+
+export interface PricingDefaults {
+  lines?: PricingLineDefault[];
   additionalLaborCents?: number;
   additionalLaborReason?: string | null;
   contractorBps?: number;
@@ -28,12 +33,29 @@ export interface PricingDefaults {
   otherExpensesCents?: number;
 }
 
+interface LineRow extends PricingLineDefault {
+  key: string;
+}
+
+let nextKey = 0;
+const newKey = () => `line-${(nextKey += 1)}`;
+
+const emptyLine = (): LineRow => ({
+  key: newKey(),
+  serviceItemId: null,
+  description: "",
+  unitPriceCents: 0,
+  quantity: 1,
+});
+
 /**
  * The pricing calculator, as a form.
  *
- * Everything is derived from the customer labor price: the administrator sets
- * what the customer pays, and the contractor's share, the Mall Consultants
- * share and both totals follow. Nothing here is typed in twice.
+ * A job carries several priced services -- four to six is normal on a real
+ * install sheet -- so the customer side is a list of lines rather than one
+ * price and a count. Everything else is derived: the administrator sets what
+ * the customer is charged for each service, and the contractor's share, the
+ * Mall Consultants share and both totals follow. Nothing here is typed twice.
  *
  * The figures update as you type using the same arithmetic the database will
  * apply on save (`src/lib/pricing.ts`, held in step with the SQL by
@@ -51,13 +73,11 @@ export function PricingPanel({
   commuterMiles?: number;
   disabled?: boolean;
 }) {
-  const [serviceId, setServiceId] = useState(defaults.serviceItemId ?? "");
-  const [price, setPrice] = useState(
-    defaults.customerLaborPriceCents
-      ? (defaults.customerLaborPriceCents / 100).toFixed(2)
-      : "",
+  const [lines, setLines] = useState<LineRow[]>(() =>
+    (defaults.lines ?? []).length > 0
+      ? defaults.lines!.map((l) => ({ ...l, key: newKey() }))
+      : [emptyLine()],
   );
-  const [tasks, setTasks] = useState(String(defaults.taskCount ?? 1));
   const [additional, setAdditional] = useState(
     defaults.additionalLaborCents ? (defaults.additionalLaborCents / 100).toFixed(2) : "",
   );
@@ -103,8 +123,10 @@ export function PricingPanel({
   const result = useMemo(() => {
     try {
       return calculatePricing({
-        customerLaborPriceCents: toCents(price),
-        taskCount: Number(tasks) || 0,
+        lines: lines.map((l) => ({
+          unitPriceCents: l.unitPriceCents,
+          quantity: l.quantity,
+        })),
         additionalLaborCents: toCents(additional),
         contractorBps: bps,
         contractorMiles: Number(miles) || 0,
@@ -118,16 +140,25 @@ export function PricingPanel({
     } catch {
       return null;
     }
-  }, [price, tasks, additional, bps, miles, excluded, rate, materials, tolls, hotel, other]);
+  }, [lines, additional, bps, miles, excluded, rate, materials, tolls, hotel, other]);
 
-  /** Selecting a service fills the customer price from the catalogue. */
-  function pickService(id: string) {
-    setServiceId(id);
+  const update = (key: string, patch: Partial<LineRow>) =>
+    setLines((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  /**
+   * Choosing a catalogue service fills that line's description and price.
+   * Both stay editable afterwards: the line records what this job was priced
+   * at, and must not move if the price list is edited later.
+   */
+  function pickService(key: string, id: string) {
     const item = priceList.find((p) => p.id === id);
-    if (item) setPrice((item.customer_labor_price_cents / 100).toFixed(2));
+    update(key, {
+      serviceItemId: id || null,
+      ...(item
+        ? { description: item.name, unitPriceCents: item.customer_labor_price_cents }
+        : {}),
+    });
   }
-
-  const selected = priceList.find((p) => p.id === serviceId);
 
   return (
     <div className="space-y-5">
@@ -137,58 +168,117 @@ export function PricingPanel({
           description="Set what the customer is charged. Everything else follows from it."
         />
         <div className="space-y-4 p-4 sm:p-5">
-          <Field label="Service type" hint="Choosing one fills the customer price from the price list.">
-            <select
-              name="service_item_id"
-              value={serviceId}
-              onChange={(e) => pickService(e.target.value)}
-              disabled={disabled}
-              className={inputClass}
-            >
-              <option value="">Not from the price list…</option>
-              {byCategory.map(([category, group]) => (
-                <optgroup key={category} label={category}>
-                  {group.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} — {formatMoney(item.customer_labor_price_cents)}/{item.unit}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </Field>
-          <input type="hidden" name="service_type" value={selected?.name ?? ""} />
+          <div className="space-y-3">
+            {lines.map((line, index) => (
+              <div
+                key={line.key}
+                className="rounded-lg border border-slate-200 p-3 sm:p-4"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Service {index + 1}
+                  </span>
+                  {lines.length > 1 && !disabled ? (
+                    <button
+                      type="button"
+                      onClick={() => setLines((rows) => rows.filter((r) => r.key !== line.key))}
+                      className="text-xs font-medium text-rose-700"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+
+                <input type="hidden" name="line_service_item_id" value={line.serviceItemId ?? ""} />
+                <input type="hidden" name="line_description" value={line.description} />
+                <input
+                  type="hidden"
+                  name="line_unit_price"
+                  value={(line.unitPriceCents / 100).toFixed(2)}
+                />
+                <input type="hidden" name="line_quantity" value={String(line.quantity)} />
+
+                <div className="mt-2 space-y-3">
+                  <Field label="From the price list" hint="Fills the description and price.">
+                    <select
+                      value={line.serviceItemId ?? ""}
+                      onChange={(e) => pickService(line.key, e.target.value)}
+                      disabled={disabled}
+                      className={inputClass}
+                    >
+                      <option value="">Not from the price list…</option>
+                      {byCategory.map(([category, group]) => (
+                        <optgroup key={category} label={category}>
+                          {group.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} — {formatMoney(item.customer_labor_price_cents)}/
+                              {item.unit}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                    <Field label="Description" required>
+                      <input
+                        value={line.description}
+                        onChange={(e) => update(line.key, { description: e.target.value })}
+                        disabled={disabled}
+                        placeholder="SSDC A-Program Installation"
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="Customer price" required>
+                      <input
+                        value={
+                          line.unitPriceCents === 0
+                            ? ""
+                            : (line.unitPriceCents / 100).toFixed(2)
+                        }
+                        onChange={(e) =>
+                          update(line.key, { unitPriceCents: toCents(e.target.value) })
+                        }
+                        disabled={disabled}
+                        inputMode="decimal"
+                        placeholder="120.00"
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="Quantity" required>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.5"
+                        value={line.quantity}
+                        onChange={(e) =>
+                          update(line.key, { quantity: Number(e.target.value) || 0 })
+                        }
+                        disabled={disabled}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <div className="self-end pb-2 text-right text-sm font-semibold tabular-nums text-slate-900">
+                      {formatMoney(Math.round(line.unitPriceCents * line.quantity))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {!disabled ? (
+              <button
+                type="button"
+                onClick={() => setLines((rows) => [...rows, emptyLine()])}
+                className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                + Add another service
+              </button>
+            ) : null}
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Customer labor price" required hint="Per task, before quantity.">
-              <input
-                name="customer_labor_price"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                disabled={disabled}
-                required
-                inputMode="decimal"
-                placeholder="120.00"
-                className={inputClass}
-              />
-            </Field>
-            <Field
-              label="Number of tasks"
-              required
-              hint={selected && !selected.allows_quantity ? "This service is a flat fee." : undefined}
-            >
-              <input
-                name="task_count"
-                type="number"
-                min={0}
-                step="0.5"
-                value={tasks}
-                onChange={(e) => setTasks(e.target.value)}
-                disabled={disabled || (selected ? !selected.allows_quantity : false)}
-                required
-                className={inputClass}
-              />
-            </Field>
             <Field label="Additional approved labor" hint="Requires your approval.">
               <input
                 name="additional_labor"

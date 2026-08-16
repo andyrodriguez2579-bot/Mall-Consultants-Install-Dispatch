@@ -40,12 +40,22 @@ async function createPricedJob({
 
   await query(
     `insert into public.job_pricing
-       (job_id, customer_labor_price_cents, task_count, additional_labor_cents,
+       (job_id, additional_labor_cents,
         additional_labor_approved_at, contractor_percentage_bps)
-     values ($1, $2, $3, $4, case when $4 > 0 then now() else null end,
-             coalesce($5, public.default_contractor_bps()))`,
-    [job.id, customerPriceCents, taskCount, additionalCents, bps],
+     values ($1, $2, case when $2 > 0 then now() else null end,
+             coalesce($3, public.default_contractor_bps()))`,
+    [job.id, additionalCents, bps],
   );
+
+  // The customer price now lives on a service line rather than on job_pricing.
+  if (customerPriceCents > 0) {
+    await query(
+      `insert into public.job_service_lines
+         (job_id, description, unit_price_cents, quantity)
+       values ($1, 'Fixture service', $2, $3)`,
+      [job.id, customerPriceCents, taskCount],
+    );
+  }
 
   return job.id;
 }
@@ -358,8 +368,8 @@ test("unapproved additional labor cannot be stored", async () => {
 
   await assert.rejects(
     query(
-      `insert into public.job_pricing (job_id, customer_labor_price_cents, additional_labor_cents)
-       values ($1, 12000, 5000)`,
+      `insert into public.job_pricing (job_id, additional_labor_cents)
+       values ($1, 5000)`,
       [job.id],
     ),
     /job_pricing_additional_labor_approval/i,
@@ -378,21 +388,37 @@ test("customer pricing is frozen once a job is dispatched", async () => {
 
   await assert.rejects(
     query(
-      "update public.job_pricing set customer_labor_price_cents = 99900 where job_id = $1",
+      "update public.job_pricing set additional_labor_cents = 99900 where job_id = $1",
+      [jobId],
+    ),
+    /pricing is fixed once a job is dispatched/i,
+  );
+
+  // The lines are part of the same agreement, so they freeze with it -- adding,
+  // repricing or removing a service after dispatch all have to be refused.
+  await assert.rejects(
+    query(
+      `insert into public.job_service_lines (job_id, description, unit_price_cents, quantity)
+       values ($1, 'Snuck in later', 50000, 1)`,
       [jobId],
     ),
     /pricing is fixed once a job is dispatched/i,
   );
 
   await assert.rejects(
-    query("update public.job_pricing set task_count = 9 where job_id = $1", [jobId]),
+    query("update public.job_service_lines set unit_price_cents = 99900 where job_id = $1", [jobId]),
+    /pricing is fixed once a job is dispatched/i,
+  );
+
+  await assert.rejects(
+    query("delete from public.job_service_lines where job_id = $1", [jobId]),
     /pricing is fixed once a job is dispatched/i,
   );
 
   assert.equal(
-    (await pricingOf(jobId)).customer_labor_price_cents,
+    (await pricingOf(jobId)).lines_subtotal_cents,
     12000,
-    "the quoted price must survive the attempt",
+    "the quoted price must survive every attempt",
   );
 });
 
@@ -400,8 +426,8 @@ test("pricing cannot be attached to a job after it has been dispatched", async (
   const { jobId } = await createOfferedJob({ contractorIds: [CONTRACTOR.marcus] });
   await assert.rejects(
     query(
-      `insert into public.job_pricing (job_id, customer_labor_price_cents, task_count)
-       values ($1, 12000, 1)`,
+      `insert into public.job_pricing (job_id, additional_labor_cents)
+       values ($1, 0)`,
       [jobId],
     ),
     /pricing is fixed once a job is dispatched/i,
@@ -507,7 +533,8 @@ test("an administrator sees the full financial breakdown", async () => {
 
   assert.equal(rows.length, 1);
   const fin = rows[0];
-  assert.equal(money(fin.customer_labor_price_cents), "120.00");
+  assert.equal(money(fin.lines_subtotal_cents), "120.00");
+  assert.equal(money(fin.base_labor_total_cents), "120.00");
   assert.equal(money(fin.total_labor_revenue_cents), "120.00");
   assert.equal(money(fin.contractor_labor_pay_cents), "54.00");
   assert.equal(money(fin.mall_share_cents), "66.00");
@@ -580,4 +607,99 @@ test("the catalogue keeps the zone install programs", async () => {
 
 test.after(async () => {
   await closePool();
+});
+
+// ---------------------------------------------------------------------------
+// Several services on one job
+// ---------------------------------------------------------------------------
+
+/** Price a draft job with a list of [description, unitCents, quantity]. */
+async function createMultiLineJob(lines) {
+  const [job] = await query(
+    `insert into public.jobs (
+       status, title, customer_name, address_line1, city, state_code, postal_code,
+       scope, created_by
+     ) values ('draft', 'Multi-line fixture', 'Fixture Customer', '1 Test Way',
+               'Houston', 'TX', '77002', 'Fixture scope', $1)
+     returning id`,
+    [ADMIN_ID],
+  );
+
+  await query("insert into public.job_pricing (job_id) values ($1)", [job.id]);
+
+  for (const [description, unit, quantity] of lines) {
+    await query(
+      `insert into public.job_service_lines (job_id, description, unit_price_cents, quantity)
+       values ($1, $2, $3, $4)`,
+      [job.id, description, unit, quantity],
+    );
+  }
+
+  return job.id;
+}
+
+test("a job carries several priced services and sums them", async () => {
+  const jobId = await createMultiLineJob([
+    ["A-Program install", 12040, 1],
+    ["Sink Rite Solo install", 9500, 1],
+    ["Air gap", 2500, 2],
+  ]);
+
+  const pricing = await pricingOf(jobId);
+
+  // 120.40 + 95.00 + (25.00 x 2)
+  assert.equal(money(pricing.lines_subtotal_cents), "265.40");
+  assert.equal(money(pricing.total_labor_revenue_cents), "265.40");
+  assert.equal(money(pricing.contractor_labor_pay_cents), "119.43");
+  assert.equal(money(pricing.mall_share_cents), "145.97");
+
+  // The two shares still add back to the revenue exactly.
+  assert.equal(
+    pricing.contractor_labor_pay_cents + pricing.mall_share_cents,
+    pricing.total_labor_revenue_cents,
+  );
+});
+
+test("removing a service reprices the job", async () => {
+  const jobId = await createMultiLineJob([
+    ["A-Program install", 12040, 1],
+    ["Sink Rite Solo install", 9500, 1],
+    ["Air gap", 2500, 2],
+  ]);
+
+  await query("delete from public.job_service_lines where description = 'Air gap' and job_id = $1", [
+    jobId,
+  ]);
+
+  const pricing = await pricingOf(jobId);
+  assert.equal(money(pricing.lines_subtotal_cents), "215.40");
+  assert.equal(money(pricing.contractor_labor_pay_cents), "96.93");
+});
+
+test("the labor subtotal cannot be written directly", async () => {
+  const jobId = await createMultiLineJob([["A-Program install", 12040, 1]]);
+
+  // Accepted, then overwritten from the lines: the figure a contractor is paid
+  // from must come from the services on the job, not from whoever wrote last.
+  await query("update public.job_pricing set lines_subtotal_cents = 999999 where job_id = $1", [
+    jobId,
+  ]);
+
+  assert.equal(money((await pricingOf(jobId)).lines_subtotal_cents), "120.40");
+});
+
+test("a contractor cannot read the service lines", async () => {
+  const jobId = await createMultiLineJob([["A-Program install", 12040, 1]]);
+  await query("update public.jobs set status = 'offered' where id = $1", [jobId]);
+  await query(
+    `insert into public.job_offers (job_id, contractor_id, round, status, token_hash, expires_at)
+     values ($1, $2, 1, 'delivered', $3, now() + interval '4 hours')`,
+    [jobId, CONTRACTOR.marcus, sha256(`lines-${crypto.randomUUID()}`)],
+  );
+
+  const rows = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select * from public.job_service_lines where job_id = $1", [jobId]).then((r) => r.rows),
+  );
+
+  assert.equal(rows.length, 0, "the lines carry the customer price and are admin-only");
 });

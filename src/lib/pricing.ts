@@ -1,7 +1,8 @@
 /**
  * The pricing calculator.
  *
- * A pure mirror of the SQL in migration 0014, so a form can show a live total
+ * A pure mirror of the SQL in migrations 0014 and 0016, so a form can show a
+ * live total
  * without a round trip. The database remains the authority -- these functions
  * exist for preview, and `test/pricing-parity.test.mjs` asserts that the two
  * agree on every case, so the preview can never quietly drift from what is
@@ -18,11 +19,18 @@ export const DEFAULT_CONTRACTOR_BPS = 4500;
 export const DEFAULT_MILEAGE_RATE = 0.725;
 export const DEFAULT_COMMUTER_MILES = 30;
 
+/** One priced service on a job. A job carries several. */
+export interface PricingLine {
+  unitPriceCents: number;
+  quantity: number;
+}
+
 export interface PricingInputs {
-  /** What the customer is charged for one task, in cents. */
-  customerLaborPriceCents: number;
-  /** Number of tasks or units. */
-  taskCount: number;
+  /**
+   * The services being charged for. A job routinely carries four to six --
+   * a dispenser, an air gap, tubing, a sink system -- at different prices.
+   */
+  lines: PricingLine[];
   /** Additional approved labor charges, in cents. Requires admin approval. */
   additionalLaborCents?: number;
   /** Contractor share in basis points. 4500 = 45%. */
@@ -66,8 +74,6 @@ const nonNegative = (value: number | undefined, label: string): number => {
 };
 
 export function calculatePricing(inputs: PricingInputs): PricingResult {
-  const price = nonNegative(inputs.customerLaborPriceCents, "Customer labor price");
-  const tasks = nonNegative(inputs.taskCount, "Number of tasks");
   const additional = nonNegative(inputs.additionalLaborCents, "Additional labor");
   const bps = inputs.contractorBps ?? DEFAULT_CONTRACTOR_BPS;
 
@@ -84,7 +90,14 @@ export function calculatePricing(inputs: PricingInputs): PricingResult {
   const hotel = nonNegative(inputs.hotelCents, "Hotel");
   const other = nonNegative(inputs.otherExpensesCents, "Other expenses");
 
-  const baseLaborTotalCents = Math.round(price * tasks);
+  // Each line is rounded to the cent before summing, matching the generated
+  // column on job_service_lines. Summing first and rounding once would drift
+  // from what the database stores.
+  const baseLaborTotalCents = (inputs.lines ?? []).reduce((sum, line, index) => {
+    const unit = nonNegative(line.unitPriceCents, `Line ${index + 1} price`);
+    const quantity = nonNegative(line.quantity, `Line ${index + 1} quantity`);
+    return sum + Math.round(unit * quantity);
+  }, 0);
   const totalLaborRevenueCents = baseLaborTotalCents + additional;
 
   const contractorLaborPayCents = Math.round((totalLaborRevenueCents * bps) / 10000);

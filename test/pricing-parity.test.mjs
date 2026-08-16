@@ -52,7 +52,17 @@ test("the calculator and the database agree on every combination", async () => {
     for (const mileage of MILEAGE) {
       for (const expenses of EXPENSES) {
         const inputs = { ...labor, ...mileage, ...expenses };
-        const ts = calculatePricing(inputs);
+        // One line is the equivalent of the old price-times-count input, which
+        // keeps these cases comparable against the same SQL primitives.
+        const ts = calculatePricing({
+          ...inputs,
+          lines: [
+            {
+              unitPriceCents: inputs.customerLaborPriceCents,
+              quantity: inputs.taskCount,
+            },
+          ],
+        });
 
         const [sql] = await query(
           `select
@@ -112,13 +122,16 @@ test("the calculator and the database agree on every combination", async () => {
 });
 
 test("the calculator refuses negative inputs rather than computing from them", () => {
+  const line = { unitPriceCents: 100, quantity: 1 };
   const bad = [
-    { customerLaborPriceCents: -1, taskCount: 1 },
-    { customerLaborPriceCents: 100, taskCount: -1 },
-    { customerLaborPriceCents: 100, taskCount: 1, additionalLaborCents: -5 },
-    { customerLaborPriceCents: 100, taskCount: 1, contractorMiles: -3 },
-    { customerLaborPriceCents: 100, taskCount: 1, materialsCents: -1 },
-    { customerLaborPriceCents: 100, taskCount: 1, mileageRate: -0.5 },
+    { lines: [{ unitPriceCents: -1, quantity: 1 }] },
+    { lines: [{ unitPriceCents: 100, quantity: -1 }] },
+    // A bad line anywhere in the list, not only the first.
+    { lines: [line, { unitPriceCents: 100, quantity: -2 }] },
+    { lines: [line], additionalLaborCents: -5 },
+    { lines: [line], contractorMiles: -3 },
+    { lines: [line], materialsCents: -1 },
+    { lines: [line], mileageRate: -0.5 },
   ];
 
   for (const inputs of bad) {
@@ -126,7 +139,7 @@ test("the calculator refuses negative inputs rather than computing from them", (
   }
 
   assert.throws(
-    () => calculatePricing({ customerLaborPriceCents: 100, taskCount: 1, contractorBps: 10001 }),
+    () => calculatePricing({ lines: [line], contractorBps: 10001 }),
     RangeError,
   );
 });
@@ -162,8 +175,7 @@ test("the split never touches mileage or expenses", () => {
 
 test("the worked example, through the calculator", () => {
   const r = calculatePricing({
-    customerLaborPriceCents: 12000,
-    taskCount: 1,
+    lines: [{ unitPriceCents: 12000, quantity: 1 }],
     additionalLaborCents: 0,
     contractorMiles: 50,
     excludedMiles: 30,

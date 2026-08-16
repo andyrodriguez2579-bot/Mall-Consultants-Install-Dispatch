@@ -17,7 +17,7 @@ export default async function EditJobPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: job }, { data: skills }, { data: jobSkills }, { data: priceList }, { data: pricing }] =
+  const [{ data: job }, { data: skills }, { data: jobSkills }, { data: priceList }, { data: pricing }, { data: lineRows }] =
     await Promise.all([
       supabase.from("jobs").select("*").eq("id", id).maybeSingle<Job>(),
       supabase
@@ -33,6 +33,11 @@ export default async function EditJobPage({
         .order("sort_order")
         .order("name"),
       supabase.from("job_pricing").select("*").eq("job_id", id).maybeSingle<JobPricing>(),
+      supabase
+        .from("job_service_lines")
+        .select("service_item_id, description, unit_price_cents, quantity")
+        .eq("job_id", id)
+        .order("sort_order"),
     ]);
 
   if (!job) notFound();
@@ -40,9 +45,17 @@ export default async function EditJobPage({
   // The job keeps the percentage it was priced at, so an edit never silently
   // re-splits it at today's setting.
   const pricingDefaults: PricingDefaults = {
-    serviceItemId: job.service_item_id,
-    customerLaborPriceCents: pricing?.customer_labor_price_cents,
-    taskCount: pricing ? Number(pricing.task_count) : 1,
+    lines: ((lineRows ?? []) as Array<{
+      service_item_id: string | null;
+      description: string;
+      unit_price_cents: number;
+      quantity: number | string;
+    }>).map((l) => ({
+      serviceItemId: l.service_item_id,
+      description: l.description,
+      unitPriceCents: l.unit_price_cents,
+      quantity: Number(l.quantity),
+    })),
     additionalLaborCents: pricing?.additional_labor_cents,
     additionalLaborReason: pricing?.additional_labor_reason,
     contractorBps: pricing?.contractor_percentage_bps,

@@ -65,8 +65,7 @@ const CATALOGUE: PriceListItem[] = [
 
 // The specification's worked example, computed rather than transcribed.
 const EXAMPLE = calculatePricing({
-  customerLaborPriceCents: 12000,
-  taskCount: 1,
+  lines: [{ unitPriceCents: 12000, quantity: 1 }],
   contractorMiles: 50,
   excludedMiles: 30,
   mileageRate: 0.725,
@@ -308,8 +307,13 @@ export default function PreviewPage() {
         <PricingPanel
           priceList={CATALOGUE}
           defaults={{
-            customerLaborPriceCents: 12000,
-            taskCount: 1,
+            lines: [
+              {
+                description: "SSDC A-Program Installation",
+                unitPriceCents: 12000,
+                quantity: 1,
+              },
+            ],
             contractorMiles: 50,
             excludedMiles: 30,
             mileageRate: 0.725,
