@@ -33,6 +33,8 @@ export interface SuggestedLineItem {
   evidence: string;
 }
 
+import type { EquipmentItem } from "./workbook";
+
 export interface ParsedRequest {
   customer_name: ExtractedField<string> | null;
   site_name: ExtractedField<string> | null;
@@ -48,6 +50,12 @@ export interface ParsedRequest {
   title: ExtractedField<string> | null;
   scope: string;
   suggestedItems: SuggestedLineItem[];
+  /**
+   * Parts read from the install sheet's grid, when the request came in as a
+   * spreadsheet. Added by the intake action rather than by the text parser,
+   * because the parts table only survives being read column by column.
+   */
+  equipment?: EquipmentItem[];
   /** Fields the parser could not fill, for the review screen to highlight. */
   missing: string[];
 }
@@ -63,11 +71,27 @@ export interface MatchableItem {
 // ---------------------------------------------------------------------------
 
 const LABEL_ALIASES: Record<string, string[]> = {
-  customer: ["customer", "client", "account", "customer name", "bill to", "company"],
+  customer: [
+    "customer", "client", "account", "customer name", "bill to", "company",
+    "account name",
+  ],
   site: ["site", "site name", "property", "mall", "location name", "store", "venue"],
-  address: ["address", "site address", "service address", "street", "location", "job site"],
-  contact: ["contact", "site contact", "onsite contact", "poc", "point of contact", "attn"],
-  phone: ["phone", "contact phone", "mobile", "cell", "tel", "telephone", "contact number"],
+  address: [
+    "address", "site address", "service address", "street", "location", "job site",
+    "street address",
+  ],
+  // The city line is labelled separately on survey forms, so it needs its own
+  // key -- without it the extractor falls through to scanning the whole
+  // document and can settle on a shipping address instead of the job site.
+  region: ["city st zip", "city, state, zip", "city state zip", "city/state/zip", "city"],
+  contact: [
+    "contact", "site contact", "onsite contact", "poc", "point of contact", "attn",
+    "customer first & last name", "customer first and last name", "customer contact",
+  ],
+  phone: [
+    "phone", "contact phone", "mobile", "cell", "tel", "telephone", "contact number",
+    "customer phone",
+  ],
   reference: [
     "po", "po#", "po number", "wo", "wo#", "work order", "work order #",
     "reference", "ref", "ref#", "order", "order #", "ticket",
@@ -84,7 +108,9 @@ const LABEL_ALIASES: Record<string, string[]> = {
   title: ["title", "subject", "job", "job title", "re", "work order", "wo"],
 };
 
-const LABEL_LINE = /^\s*[*\-•]?\s*([A-Za-z][A-Za-z0-9 /#.'()]{0,34}?)\s*[:\-–]\s*(.+?)\s*$/;
+// "&" and "," are allowed in a label because survey forms use them:
+// "CUSTOMER FIRST & LAST NAME:", "CITY, STATE, ZIP:".
+const LABEL_LINE = /^\s*[*\-•]?\s*([A-Za-z][A-Za-z0-9 /#.'()&,]{0,34}?)\s*[:\-–]\s*(.+?)\s*$/;
 
 function normalizeLabel(raw: string): string {
   return raw.toLowerCase().replace(/[.#]/g, "").replace(/\s+/g, " ").trim();
@@ -435,6 +461,8 @@ export function parseInstallRequest(
   // street with the city line following it.
   const searchSpaces: Array<{ text: string; basis: "label" | "pattern" }> = [];
   if (addressSource) searchSpaces.push({ text: addressSource, basis: "label" });
+  const regionLabel = first(labels.get("region"));
+  if (regionLabel) searchSpaces.push({ text: regionLabel.value, basis: "label" });
   searchSpaces.push({ text, basis: "pattern" });
 
   for (const space of searchSpaces) {
@@ -545,7 +573,15 @@ export function parseInstallRequest(
   if (!title) {
     const firstProse = lines
       .map((l) => l.trim())
-      .find((l) => l.length > 12 && l.length < 120 && !LABEL_LINE.test(l));
+      .find(
+        (l) =>
+          l.length > 12 &&
+          l.length < 120 &&
+          !LABEL_LINE.test(l) &&
+          // A spreadsheet is flattened with "--- SheetName ---" dividers. They
+          // are structure, not prose, and make a poor job title.
+          !/^-{2,}.*-{2,}$/.test(l),
+      );
     if (firstProse) title = field(firstProse, firstProse, "pattern");
   }
 

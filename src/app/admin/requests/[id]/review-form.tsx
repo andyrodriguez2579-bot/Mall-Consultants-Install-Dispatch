@@ -12,6 +12,7 @@ import {
 } from "@/components/ui";
 import { PricingPanel } from "@/components/pricing-panel";
 import type { ExtractedField, ParsedRequest } from "@/lib/intake/parse";
+import type { EquipmentItem } from "@/lib/intake/workbook";
 import type { PriceListItem, Skill } from "@/lib/types";
 import {
   type RequestState,
@@ -70,6 +71,7 @@ export function ReviewForm({
   parsed,
   priceList,
   skills,
+  equipment,
   contractorBps,
   mileageRate,
   commuterMiles,
@@ -78,6 +80,7 @@ export function ReviewForm({
   parsed: ParsedRequest;
   priceList: PriceListItem[];
   skills: Skill[];
+  equipment: EquipmentItem[];
   contractorBps: number;
   mileageRate: number;
   commuterMiles: number;
@@ -213,11 +216,21 @@ export function ReviewForm({
             >
               <textarea name="access_notes" rows={2} className={inputClass} />
             </Field>
+            {/* Prefilled with the parts list so the contractor is told what to
+                bring without anyone having to retype it. Editable -- it is a
+                starting point, not a fixed record. */}
             <Field label="Site instructions" error={err.instructions}>
-              <textarea name="instructions" rows={2} className={inputClass} />
+              <textarea
+                name="instructions"
+                rows={equipment.length > 0 ? 8 : 2}
+                defaultValue={equipmentText(equipment)}
+                className={inputClass}
+              />
             </Field>
           </div>
         </Card>
+
+        {equipment.length > 0 ? <EquipmentList items={equipment} /> : null}
 
         <PricingPanel
           priceList={priceList}
@@ -312,5 +325,80 @@ export function ReviewForm({
         </form>
       </div>
     </div>
+  );
+}
+
+/**
+ * The parts list as text for the site instructions.
+ *
+ * Grouped by machine, because the sheet lists a full parts set per machine
+ * option and a contractor who brings the wrong set has made a wasted trip.
+ */
+function equipmentText(items: EquipmentItem[]): string {
+  if (items.length === 0) return "";
+
+  const groups = new Map<string, EquipmentItem[]>();
+  for (const item of items) {
+    const key = item.group ?? "Parts";
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+
+  return [...groups.entries()]
+    .map(([group, list]) =>
+      [
+        `${group}:`,
+        ...list.map(
+          (i) =>
+            `  ${i.quantity ?? 1} x ${i.description}${
+              i.partNumber ? ` (part ${i.partNumber})` : ""
+            }`,
+        ),
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
+/** What the sheet says is needed, shown before the job is priced. */
+function EquipmentList({ items }: { items: EquipmentItem[] }) {
+  const groups = new Map<string, EquipmentItem[]>();
+  for (const item of items) {
+    const key = item.group ?? "Parts";
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title={`Equipment on the sheet — ${items.length} ${
+          items.length === 1 ? "part" : "parts"
+        }`}
+        description="Read from the install sheet's parts table. Prefilled into the site instructions below."
+      />
+      <div className="space-y-4 p-4 sm:p-5">
+        {[...groups.entries()].map(([group, list]) => (
+          <div key={group}>
+            <p className="text-sm font-semibold text-slate-900">{group}</p>
+            <ul className="mt-1 space-y-0.5">
+              {list.map((item) => (
+                <li
+                  key={`${group}-${item.partNumber}-${item.description}`}
+                  className="flex justify-between gap-4 text-sm text-slate-700"
+                >
+                  <span>
+                    {item.description}{" "}
+                    <span className="font-mono text-[11px] text-slate-400">
+                      {item.partNumber}
+                    </span>
+                  </span>
+                  <span className="tabular-nums text-slate-500">
+                    ×{item.quantity ?? 1}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }

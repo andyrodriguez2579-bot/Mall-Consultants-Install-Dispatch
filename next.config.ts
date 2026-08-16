@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: {
+    // Install-request workbooks carry embedded product photographs and run to
+    // several megabytes. The default server-action body limit is 1 MB, which
+    // rejects a real one. Kept in step with MAX_UPLOAD_BYTES in
+    // src/app/admin/requests/actions.ts.
+    serverActions: { bodySizeLimit: "20mb" },
+  },
   async headers() {
     return [
       {

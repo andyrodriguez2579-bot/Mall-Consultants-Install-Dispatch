@@ -5,10 +5,23 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { parseInstallRequest } from "@/lib/intake/parse";
+import {
+  type EquipmentItem,
+  isSpreadsheetFilename,
+  readWorkbook,
+} from "@/lib/intake/workbook";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, PriceListItem } from "@/lib/types";
 import { readPricingForm, upsertJobPricing, validatePricing } from "@/lib/pricing-form";
 import { fieldErrors, jobFormSchema, readMulti } from "@/lib/validation";
+
+/**
+ * Survey workbooks run to several megabytes because of the embedded product
+ * photographs. Kept in step with `serverActions.bodySizeLimit` in
+ * next.config.ts, which is what actually rejects an oversized upload -- this
+ * check exists to say so in words rather than as a framework error.
+ */
+const MAX_UPLOAD_BYTES = 20 * 1_048_576;
 
 export interface RequestState {
   error?: string;
@@ -28,11 +41,48 @@ export async function createRequest(
 ): Promise<RequestState> {
   const admin = await requireAdmin();
 
-  const rawText = formData.get("raw_text");
+  const pasted = formData.get("raw_text");
   const source = formData.get("source");
+  const upload = formData.get("workbook");
 
-  if (typeof rawText !== "string" || rawText.trim().length < 10) {
-    return { errors: { raw_text: "Paste the request text first." } };
+  let rawText = typeof pasted === "string" ? pasted.trim() : "";
+  let equipment: EquipmentItem[] = [];
+
+  if (upload instanceof File && upload.size > 0) {
+    if (!isSpreadsheetFilename(upload.name)) {
+      return {
+        errors: {
+          workbook: `${upload.name} is not a spreadsheet — expected .xlsb, .xlsx, .xlsm, .xls or .csv.`,
+        },
+      };
+    }
+    if (upload.size > MAX_UPLOAD_BYTES) {
+      const mb = (upload.size / 1_048_576).toFixed(1);
+      return {
+        errors: {
+          workbook: `That file is ${mb} MB; the limit is ${MAX_UPLOAD_BYTES / 1_048_576} MB.`,
+        },
+      };
+    }
+
+    try {
+      const read = readWorkbook(await upload.arrayBuffer());
+      if (!read.text.trim()) {
+        return { errors: { workbook: "That workbook has no readable install sheet." } };
+      }
+      equipment = read.equipment;
+      // The covering email is kept, and kept second. The extractor falls back
+      // to scanning the whole document for an address, and a "ship equipment
+      // to" line in the email must not outrank the job site on the sheet.
+      rawText = rawText ? `${read.text}\n\n--- covering email ---\n${rawText}` : read.text;
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : "unreadable";
+      return { errors: { workbook: `Could not read that workbook: ${detail}` } };
+    }
+  }
+
+  if (rawText.length < 10) {
+    return { errors: { raw_text: "Attach the install sheet, or paste the request text." } };
   }
 
   const supabase = await createClient();
@@ -51,8 +101,13 @@ export async function createRequest(
     .from("install_requests")
     .insert({
       raw_text: rawText,
-      source: typeof source === "string" && source ? source : "paste",
-      parsed: parsed as unknown as Record<string, unknown>,
+      source:
+        typeof source === "string" && source
+          ? source
+          : upload instanceof File && upload.size > 0
+            ? "spreadsheet"
+            : "paste",
+      parsed: { ...parsed, equipment } as unknown as Record<string, unknown>,
       created_by: admin.id,
     })
     .select("id")
