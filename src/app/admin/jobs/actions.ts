@@ -57,7 +57,6 @@ function parseJobForm(formData: FormData) {
     postal_code: formData.get("postal_code") ?? "",
     scope: formData.get("scope") ?? "",
     instructions: formData.get("instructions") ?? "",
-    contractor_pay: formData.get("contractor_pay") ?? "",
     scheduled_start: formData.get("scheduled_start") ?? "",
     scheduled_end: formData.get("scheduled_end") ?? "",
     deadline_at: formData.get("deadline_at") ?? "",
@@ -75,7 +74,7 @@ export async function createJob(_prev: FormState, formData: FormData): Promise<F
   const pricingErrors = validatePricing(pricing);
   if (pricingErrors) return { errors: pricingErrors };
 
-  const { skill_ids, contractor_pay: _ignored, ...fields } = parsed.data;
+  const { skill_ids, ...fields } = parsed.data;
 
   const supabase = await createClient();
 
@@ -121,7 +120,7 @@ export async function updateJob(_prev: FormState, formData: FormData): Promise<F
   const parsed = parseJobForm(formData);
   if (!parsed.success) return { errors: fieldErrors(parsed.error) };
 
-  const { skill_ids, contractor_pay: _unused, ...fields } = parsed.data;
+  const { skill_ids, ...fields } = parsed.data;
   const supabase = await createClient();
 
   const { data: existing } = await supabase
@@ -161,8 +160,7 @@ export async function updateJob(_prev: FormState, formData: FormData): Promise<F
     if (pricingError) {
       return {
         errors: {
-          customer_labor_price:
-            "Pricing is fixed once a job has been dispatched. Cancel and repost to change it.",
+          lines: "Pricing is fixed once a job has been dispatched. Cancel and repost to change it.",
         },
       };
     }
@@ -224,19 +222,30 @@ export async function duplicateJob(formData: FormData): Promise<void> {
 
   if (!copy) return;
 
-  // Carry the pricing across too, or the copy would be a free job.
+  // Carry the pricing across too, or the copy would be a free job. The share is
+  // copied rather than re-defaulted: a job duplicated from one that paid above
+  // the standard rate should start from that rate, not silently drop back.
   const { data: sourcePricing } = await supabase
     .from("job_pricing")
-    .select("customer_labor_price_cents, task_count, contractor_percentage_bps")
+    .select("contractor_percentage_bps")
     .eq("job_id", jobId)
-    .maybeSingle<{
-      customer_labor_price_cents: number;
-      task_count: number;
-      contractor_percentage_bps: number;
-    }>();
+    .maybeSingle<{ contractor_percentage_bps: number }>();
 
-  if (sourcePricing) {
-    await supabase.from("job_pricing").insert({ job_id: copy.id, ...sourcePricing });
+  await supabase.from("job_pricing").insert({
+    job_id: copy.id,
+    ...(sourcePricing ?? {}),
+  });
+
+  const { data: sourceLines } = await supabase
+    .from("job_service_lines")
+    .select("service_item_id, description, unit_price_cents, quantity, sort_order")
+    .eq("job_id", jobId)
+    .order("sort_order");
+
+  if (sourceLines && sourceLines.length > 0) {
+    await supabase
+      .from("job_service_lines")
+      .insert(sourceLines.map((line) => ({ job_id: copy.id, ...line })));
   }
 
   const { data: skills } = await supabase

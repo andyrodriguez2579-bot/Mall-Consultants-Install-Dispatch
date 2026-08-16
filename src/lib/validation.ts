@@ -86,7 +86,9 @@ export const jobFormSchema = z
       .regex(/^\d{5}(-\d{4})?$/, "Use a 5-digit or ZIP+4 postal code."),
     scope: z.string().trim().min(10, "Describe the scope of work in a sentence or two."),
     instructions: z.string().trim().optional().transform((v) => v || null),
-    contractor_pay: moneySchema,
+    // No contractor_pay: the total is computed by the database from the service
+    // lines, mileage and approved expenses. Validating a field the form no
+    // longer has meant it was always zero, and the job could never be saved.
     scheduled_start: optionalDateTime,
     scheduled_end: optionalDateTime,
     deadline_at: optionalDateTime,

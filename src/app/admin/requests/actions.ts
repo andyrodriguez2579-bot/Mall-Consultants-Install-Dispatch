@@ -191,7 +191,6 @@ export async function convertRequestToJob(
     postal_code: formData.get("postal_code") ?? "",
     scope: formData.get("scope") ?? "",
     instructions: formData.get("instructions") ?? "",
-    contractor_pay: formData.get("contractor_pay") || "0",
     scheduled_start: formData.get("scheduled_start") ?? "",
     scheduled_end: formData.get("scheduled_end") ?? "",
     deadline_at: formData.get("deadline_at") ?? "",
@@ -204,7 +203,7 @@ export async function convertRequestToJob(
   const pricingErrors = validatePricing(pricing);
   if (pricingErrors) return { errors: pricingErrors };
 
-  const { skill_ids, contractor_pay: _ignored, ...fields } = parsed.data;
+  const { skill_ids, ...fields } = parsed.data;
   const supabase = await createClient();
 
   const { data: job, error } = await supabase
