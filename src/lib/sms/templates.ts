@@ -5,10 +5,16 @@ import type { Job } from "@/lib/types";
 /**
  * SMS bodies.
  *
- * Two constraints shape everything here. A GSM-7 segment is 160 characters and
+ * Three constraints shape everything here. A GSM-7 segment is 160 characters and
  * every extra segment is billed, so messages stay tight. And the link is the
  * whole point of the message -- it goes last, where a phone will linkify it
  * cleanly without trailing punctuation.
+ *
+ * Every character stays inside GSM-7. One character outside it -- an em dash,
+ * a middle dot, a curly quote -- re-encodes the entire message as UCS-2, which
+ * drops a segment from 160 characters to 70. An offer runs to roughly 200
+ * characters, so a single decorative separator turns a two-segment message into
+ * three, on every offer, forever.
  *
  * The offer message carries opt-out wording; the rest do not. Carriers expect
  * it discoverable rather than on every message, and an offer is the one a
@@ -38,7 +44,7 @@ export function offerSms({ job, link, expiresInHours }: OfferSmsInput): string {
   return [
     `${SMS_SENDER_LABEL}: new job ${job.job_number}`,
     `${job.title}`,
-    `${job.city}, ${job.state_code} · ${when} · ${pay}`,
+    `${job.city}, ${job.state_code} | ${when} | ${pay}`,
     `First to accept gets it. Expires in ${expiresInHours}h.`,
     link,
     "Reply STOP to opt out.",
@@ -141,7 +147,7 @@ export function paidSms(
   reference: string | null,
 ): string {
   const ref = reference ? ` Ref ${reference}.` : "";
-  return `${SMS_SENDER_LABEL}: payment sent for job ${job.job_number} — ${formatMoney(
+  return `${SMS_SENDER_LABEL}: payment sent for job ${job.job_number} - ${formatMoney(
     job.contractor_pay_cents,
     job.currency,
   )}.${ref}`;

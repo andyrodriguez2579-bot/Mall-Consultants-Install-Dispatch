@@ -171,7 +171,9 @@ test("a sheet's title and scope are composed, not lifted from the grid", async (
   const parsed = parseInstallRequest(text, []);
 
   const title = sheetTitle(parsed);
-  assert.equal(title, "SSDC installation — Luigi's Pizza, Ringwood");
+  // A plain hyphen, not an em dash: this title goes into the offer SMS, and
+  // one character outside GSM-7 halves the characters per billed segment.
+  assert.equal(title, "SSDC installation - Luigi's Pizza, Ringwood");
   assert.ok(!title.includes("|"), "a grid row must never become the title");
 
   const scope = sheetScope(parsed, details);

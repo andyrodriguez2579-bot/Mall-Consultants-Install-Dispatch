@@ -24,12 +24,17 @@ const SECTION_TITLE: Record<SheetSection, string> = {
 
 const SECTION_ORDER: SheetSection[] = ["install", "dispenser_equipment", "chemicals"];
 
+/**
+ * Plain hyphens, not em dashes: the title goes into the offer SMS, and a single
+ * character outside GSM-7 re-encodes the whole message as UCS-2 -- 70
+ * characters per segment instead of 160.
+ */
 export function sheetTitle(parsed: ParsedRequest): string {
   const who = value(parsed.site_name) ?? value(parsed.customer_name);
   const where = value(parsed.city);
 
-  if (who && where) return `SSDC installation — ${who}, ${where}`;
-  if (who) return `SSDC installation — ${who}`;
+  if (who && where) return `SSDC installation - ${who}, ${where}`;
+  if (who) return `SSDC installation - ${who}`;
   return "SSDC installation";
 }
 
@@ -111,7 +116,7 @@ export function sheetInstructions(
 }
 
 function describe(item: SheetItem): string {
-  const quantity = item.quantity && item.quantity > 1 ? `${item.quantity} × ` : "";
+  const quantity = item.quantity && item.quantity > 1 ? `${item.quantity} x ` : "";
   const code = item.code ? ` (item ${item.code})` : "";
-  return `${quantity}${item.description}${code} — ${item.category}`;
+  return `${quantity}${item.description}${code} - ${item.category}`;
 }
