@@ -123,3 +123,24 @@ test("filenames are checked before the bytes are", () => {
 test("an empty parts table yields no equipment rather than throwing", () => {
   assert.deepEqual(readEquipment([["ACCOUNT NAME:", "Acme"]]), []);
 });
+
+test("a sheet's title and scope are composed, not lifted from the grid", async () => {
+  const { sheetScope, sheetTitle } = await import("../src/lib/intake/summary.ts");
+  const { text, equipment } = readWorkbook(installSheet());
+  const parsed = parseInstallRequest(text, []);
+
+  const title = sheetTitle(parsed);
+  assert.equal(title, "SSDC installation — Luigi's Pizza, Ringwood");
+  assert.ok(!title.includes("|"), "a grid row must never become the title");
+
+  const scope = sheetScope(parsed, equipment);
+  assert.ok(scope.includes("Luigi's Pizza"));
+  assert.ok(scope.includes("Ringwood, NJ"));
+  assert.ok(scope.includes("Standard Height Conveyor"), "names the machines");
+  assert.ok(scope.includes("High Hood Conveyor"));
+
+  // The point of composing it: a contractor reads a few lines, not the form.
+  assert.ok(scope.length < 400, `scope should stay short, got ${scope.length} chars`);
+  assert.ok(!scope.includes("PFG SPECIALIST"), "sales fields must not reach the contractor");
+  assert.ok(!scope.includes("B9 ACCOUNT NUMBER"));
+});

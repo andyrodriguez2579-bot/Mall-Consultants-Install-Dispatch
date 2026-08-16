@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { parseInstallRequest } from "@/lib/intake/parse";
+import { type ParsedRequest, parseInstallRequest } from "@/lib/intake/parse";
+import { sheetScope, sheetTitle } from "@/lib/intake/summary";
 import type { EquipmentItem } from "@/lib/intake/workbook";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, PriceListItem } from "@/lib/types";
@@ -116,12 +117,25 @@ export async function createRequest(
     (priceList ?? []) as Array<{ code: string; name: string }>,
   );
 
+  // A form is not a description of work. When the request came from a sheet,
+  // the title and scope are written from the fields that were identified rather
+  // than lifted out of the grid, which would otherwise put several hundred
+  // lines of sales fields in front of a contractor.
+  const fromSheet = typeof sheetText === "string" && Boolean(sheetText.trim());
+  const summarised: ParsedRequest = fromSheet
+    ? {
+        ...parsed,
+        title: { value: sheetTitle(parsed), evidence: "composed from the sheet", basis: "label" },
+        scope: sheetScope(parsed, equipment),
+      }
+    : parsed;
+
   const { data: request, error } = await supabase
     .from("install_requests")
     .insert({
       raw_text: rawText,
       source: typeof source === "string" && source ? source : "paste",
-      parsed: { ...parsed, equipment } as unknown as Record<string, unknown>,
+      parsed: { ...summarised, equipment } as unknown as Record<string, unknown>,
       created_by: admin.id,
     })
     .select("id")
