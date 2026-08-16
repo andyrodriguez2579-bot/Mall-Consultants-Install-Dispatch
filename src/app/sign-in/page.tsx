@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSessionUser, homePathFor } from "@/lib/auth";
+import Link from "next/link";
 import { ORG_NAME, PRODUCT_NAME } from "@/lib/branding";
 import { SignInForms } from "./sign-in-forms";
 
@@ -23,6 +24,17 @@ export default async function SignInPage() {
 
       <p className="mt-8 text-center text-xs text-slate-500">
         Access is limited to approved contractors and {ORG_NAME} staff.
+      </p>
+      {/* Linked from the one page anybody can reach: a policy nobody can find
+          is not published, and campaign reviewers look for exactly this. */}
+      <p className="mt-3 text-center text-xs text-slate-500">
+        <Link href="/privacy" className="font-medium text-blue-700">
+          Privacy Policy
+        </Link>
+        <span className="mx-2 text-slate-300">·</span>
+        <Link href="/terms" className="font-medium text-blue-700">
+          Terms of Use
+        </Link>
       </p>
     </main>
   );
