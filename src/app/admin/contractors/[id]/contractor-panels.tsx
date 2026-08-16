@@ -16,6 +16,7 @@ import type { Contractor, ServiceArea, Skill } from "@/lib/types";
 import {
   type ContractorState,
   addContractorNote,
+  deleteContractor,
   setContractorStatus,
   updateContractorSkills,
 } from "../actions";
@@ -157,6 +158,51 @@ export function ContractorPanels({
           </ul>
         )}
       </Card>
+
+      <DeletePanel contractorId={contractor.id} />
     </div>
+  );
+}
+
+/**
+ * Deletion, gated behind typing the word.
+ *
+ * A contractor record holds someone's real mobile number, so removing a
+ * mistaken entry has to be possible from here rather than requiring a trip into
+ * the database. It is also irreversible and sits below every other control, so
+ * the confirmation is a typed word rather than a second click.
+ */
+function DeletePanel({ contractorId }: { contractorId: string }) {
+  const [state, action] = useActionState(deleteContractor, EMPTY);
+
+  return (
+    <Card className="border-rose-200">
+      <CardHeader
+        title="Delete this contractor"
+        description="Removes the record, the profile and the login, and frees the email and mobile number for re-use. A contractor who is on any job cannot be deleted -- suspend them instead."
+      />
+      <form action={action} className="space-y-3 p-4 sm:p-5">
+        <input type="hidden" name="contractor_id" value={contractorId} />
+        {state.error ? <ErrorBanner>{state.error}</ErrorBanner> : null}
+        {state.success ? <SuccessBanner>{state.success}</SuccessBanner> : null}
+
+        <label className="block">
+          <span className="block text-sm font-medium text-slate-800">
+            Type DELETE to confirm
+          </span>
+          <input
+            name="confirm"
+            autoComplete="off"
+            placeholder="DELETE"
+            className={inputClass + " mt-1.5 max-w-xs"}
+          />
+        </label>
+        {state.errors?.confirm ? (
+          <p className="text-xs text-rose-600">{state.errors.confirm}</p>
+        ) : null}
+
+        <Submit tone="danger">Delete permanently</Submit>
+      </form>
+    </Card>
   );
 }

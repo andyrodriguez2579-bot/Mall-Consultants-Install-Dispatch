@@ -24,7 +24,12 @@ export default async function ContractorsPage() {
   const [{ data: rows, error: rowsError }, { data: skills }, { data: areas }] = await Promise.all([
     supabase
       .from("contractors")
-      .select("*, profile:id(full_name, phone, email, is_active)")
+      // Named by constraint, not by column. `contractors` references
+      // `profiles` twice -- as the person (id) and as whoever approved them
+      // (approved_by) -- and an unqualified embed is rejected as ambiguous.
+      .select(
+        "*, profile:profiles!contractors_id_fkey(full_name, phone, email, is_active)",
+      )
       .order("status"),
     supabase.from("skills").select("id, slug, name, description, is_active").eq("is_active", true).order("name"),
     supabase

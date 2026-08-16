@@ -20,6 +20,7 @@ import {
   formatRelative,
 } from "@/lib/format";
 import { signAttachments } from "@/lib/storage";
+import { profilesByIds } from "@/lib/people";
 import { createClient } from "@/lib/supabase/server";
 import type {
   AuditEntry,
@@ -65,8 +66,10 @@ export default async function AdminJobDetail({
     { data: financials },
   ] = await Promise.all([
     supabase
+      // No embed: see profilesByIds in src/lib/people.ts for why reaching a
+      // contractor's name through `contractors` fails the whole query.
       .from("job_offers")
-      .select("*, contractor:contractor_id(id, full_name, phone)")
+      .select("*")
       .eq("job_id", id)
       .order("created_at", { ascending: false }),
     supabase.from("job_skills").select("skills(id, slug, name, description, is_active)").eq("job_id", id),
@@ -88,7 +91,14 @@ export default async function AdminJobDetail({
     supabase.from("job_financials").select("*").eq("job_id", id).maybeSingle<JobFinancials>(),
   ]);
 
-  const offers = (offerRows ?? []) as unknown as OfferRow[];
+  const offerPeople = await profilesByIds(
+    supabase,
+    (offerRows ?? []).map((o) => (o as { contractor_id: string }).contractor_id),
+  );
+  const offers = ((offerRows ?? []) as unknown as OfferRow[]).map((o) => ({
+    ...o,
+    contractor: offerPeople.get(o.contractor_id) ?? null,
+  })) as OfferRow[];
   const requiredSkills = ((skillRows ?? []) as unknown as Array<{ skills: Skill }>)
     .map((r) => r.skills)
     .filter(Boolean);

@@ -1,4 +1,5 @@
 import { appBaseUrl, offerTtlHours } from "@/lib/env";
+import { profilesByIds } from "@/lib/people";
 import { sendSms, templates } from "@/lib/sms";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { generateToken, hashToken } from "@/lib/tokens";
@@ -83,21 +84,26 @@ export async function dispatchJob({
 
   // Only approved, active, SMS-reachable contractors are ever texted, whatever
   // the caller passed in.
-  const { data: recipients } = await supabase
+  const { data: recipients, error: recipientsError } = await supabase
     .from("contractors")
-    .select("id, status, sms_opt_in, profiles!inner(id, full_name, phone, is_active)")
+    .select("id, status, sms_opt_in")
     .in("id", contractorIds)
     .eq("status", "approved");
 
-  type RecipientRow = {
-    id: string;
-    sms_opt_in: boolean;
-    profiles: Pick<Profile, "id" | "full_name" | "phone" | "is_active">;
-  };
+  if (recipientsError) {
+    throw new Error(`Could not read the contractor list: ${recipientsError.message}`);
+  }
 
-  const eligible = ((recipients ?? []) as unknown as RecipientRow[]).filter(
-    (r) => r.profiles?.is_active && r.profiles?.phone && r.sms_opt_in,
+  type RecipientRow = { id: string; sms_opt_in: boolean };
+  const approved = (recipients ?? []) as RecipientRow[];
+  const people = await profilesByIds(
+    supabase,
+    approved.map((r) => r.id),
   );
+
+  const eligible = approved
+    .map((r) => ({ ...r, profile: people.get(r.id) ?? null }))
+    .filter((r) => r.profile?.is_active && r.profile.phone && r.sms_opt_in);
 
   const failures: DispatchResult["failures"] = [];
   for (const id of contractorIds) {
@@ -136,7 +142,7 @@ export async function dispatchJob({
     }
 
     const outcome = await sendSms({
-      to: recipient.profiles.phone!,
+      to: recipient.profile!.phone!,
       body: templates.offerSms({
         job,
         link: offerUrl(token),
@@ -237,21 +243,25 @@ export async function notifyAcceptance({
     // Everyone else who held a live offer in this round.
     const { data: losers } = await supabase
       .from("job_offers")
-      .select("contractor_id, profiles:contractor_id(phone)")
+      .select("contractor_id")
       .eq("job_id", jobId)
       .eq("round", job.offer_round)
       .eq("status", "filled");
 
-    type LoserRow = { contractor_id: string; profiles: { phone: string | null } | null };
+    const loserIds = ((losers ?? []) as Array<{ contractor_id: string }>).map(
+      (l) => l.contractor_id,
+    );
+    const loserPeople = await profilesByIds(supabase, loserIds);
 
-    for (const loser of (losers ?? []) as unknown as LoserRow[]) {
-      if (!loser.profiles?.phone) continue;
+    for (const contractorId of loserIds) {
+      const phone = loserPeople.get(contractorId)?.phone;
+      if (!phone) continue;
       await sendSms({
-        to: loser.profiles.phone,
+        to: phone,
         body: templates.filledSms(job),
         purpose: "job_filled",
         jobId,
-        contractorId: loser.contractor_id,
+        contractorId,
         client: supabase,
       });
     }

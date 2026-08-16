@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { centsToDecimal, csvResponse, isoOrBlank, toCsv } from "@/lib/csv";
+import { profilesByIds } from "@/lib/people";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, JobStatus, Profile } from "@/lib/types";
 
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
   const supabase = await createClient();
   let query = supabase
     .from("jobs")
-    .select("*, assignee:assigned_contractor_id(full_name, phone)")
+    .select("*")
     .order("created_at", { ascending: false })
     .limit(5000);
 
@@ -51,7 +52,14 @@ export async function GET(request: Request) {
   const { data, error } = await query;
   if (error) return new Response(`Export failed: ${error.message}`, { status: 500 });
 
-  const jobs = (data ?? []) as unknown as Row[];
+  const people = await profilesByIds(
+    supabase,
+    (data ?? []).map((j) => (j as { assigned_contractor_id: string | null }).assigned_contractor_id),
+  );
+  const jobs = ((data ?? []) as unknown as Row[]).map((j) => ({
+    ...j,
+    assignee: j.assigned_contractor_id ? (people.get(j.assigned_contractor_id) ?? null) : null,
+  })) as Row[];
 
   const csv = toCsv(
     [

@@ -273,3 +273,84 @@ export async function addContractorNote(
   revalidatePath(`/admin/contractors/${contractorId}`);
   return { success: "Note added." };
 }
+
+/**
+ * Remove a contractor completely: the contractor record, the profile and the
+ * login.
+ *
+ * Refused once they hold any job. Jobs reference the contractor, and the audit
+ * trail is meant to stay answerable years later -- "who did this work" must not
+ * become unanswerable because someone tidied up a list. Suspend them instead;
+ * a suspended contractor receives nothing and can accept nothing.
+ *
+ * For a mistaken entry -- a test record, a wrong number, someone added twice --
+ * deletion is the honest option, and it releases the email and phone number for
+ * re-use.
+ */
+export async function deleteContractor(
+  _prev: ContractorState,
+  formData: FormData,
+): Promise<ContractorState> {
+  await requireAdmin();
+
+  const contractorId = formData.get("contractor_id");
+  const confirm = formData.get("confirm");
+  if (typeof contractorId !== "string") return { error: "Contractor not found." };
+
+  const admin = createAdminClient();
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("full_name")
+    .eq("id", contractorId)
+    .maybeSingle<{ full_name: string }>();
+
+  const name = profile?.full_name ?? "That contractor";
+
+  if (typeof confirm !== "string" || confirm.trim().toUpperCase() !== "DELETE") {
+    return { errors: { confirm: `Type DELETE to remove ${name}.` } };
+  }
+
+  const { count } = await admin
+    .from("jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("assigned_contractor_id", contractorId);
+
+  if ((count ?? 0) > 0) {
+    return {
+      error: `${name} is on ${count} job${count === 1 ? "" : "s"} and cannot be deleted -- the record of who did that work has to stand. Suspend them instead.`,
+    };
+  }
+
+  const { count: offerCount } = await admin
+    .from("job_offers")
+    .select("id", { count: "exact", head: true })
+    .eq("contractor_id", contractorId);
+
+  if ((offerCount ?? 0) > 0) {
+    await admin.from("job_offers").delete().eq("contractor_id", contractorId);
+  }
+
+  await admin.rpc("write_audit", {
+    p_entity_type: "contractor",
+    p_entity_id: contractorId,
+    p_action: "contractor.deleted",
+    p_detail: { full_name: name, offers_removed: offerCount ?? 0 },
+  });
+
+  // profiles cascades to contractors; the auth user is deleted separately
+  // because it lives outside the application schema. Deleting it last means a
+  // failure leaves an account that can be cleaned up, not orphaned rows.
+  const { error: profileError } = await admin.from("profiles").delete().eq("id", contractorId);
+  if (profileError) return { error: profileError.message };
+
+  const { error: authError } = await admin.auth.admin.deleteUser(contractorId);
+  if (authError) {
+    return {
+      error: `${name} was removed, but their login could not be deleted: ${authError.message}. Remove it in Supabase → Authentication → Users before re-using that email.`,
+    };
+  }
+
+  revalidatePath("/admin/contractors");
+  return { success: `${name} has been deleted. Their email and phone number are free to use again.` };
+}
