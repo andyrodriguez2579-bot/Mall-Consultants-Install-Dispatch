@@ -60,8 +60,10 @@ export default function TermsPage() {
         <section>
           <h2 className="text-base font-semibold text-slate-900">Text messages</h2>
           <p className="mt-2">
-            Contractors receive text messages about job offers, assignments, approvals,
-            payments and sign-in, having consented on the{" "}
+            Contractors who have opted in receive text messages about job offers,
+            assignments, approvals, payments and sign-in. Consent is given separately and
+            is optional — it is not a condition of joining the roster, of being offered
+            work, or of being paid — on the{" "}
             <Link href="/contractor-sms-consent" className="font-medium text-blue-700">
               contractor SMS consent form
             </Link>

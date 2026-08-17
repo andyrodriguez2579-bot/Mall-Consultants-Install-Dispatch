@@ -29,9 +29,9 @@ export default function ContractorSmsConsentPage() {
         Contractor SMS Consent
       </h1>
       <p className="mt-2 text-sm text-slate-600">
-        This section appears on the contractor agreement every {ORG_NAME}{" "}
-        contractor signs during onboarding. It is reproduced here in full so the
-        consent language can be read without a login.
+        This optional section appears on the contractor agreement every{" "}
+        {ORG_NAME} contractor signs during onboarding. It is reproduced here in
+        full so the consent language can be read without a login.
       </p>
 
       <section className="mt-8 rounded-xl border border-slate-300 bg-white p-5 sm:p-7">
@@ -40,19 +40,29 @@ export default function ContractorSmsConsentPage() {
         </h2>
 
         <p className="mt-3 text-sm leading-relaxed text-slate-700">
-          {ORG_NAME} dispatches field installation work by text message. To
-          receive job offers you must give us a mobile number and agree to be
-          texted at it.
+          {ORG_NAME} can send you field installation work by text message. This
+          is offered as a convenience, and it is your choice. Choose one:
         </p>
 
-        <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-relaxed text-slate-800">
+        <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-4 text-sm leading-relaxed text-slate-800">
           <p className="font-medium">
-            ☐ I consent to receive SMS job offers and job-related notifications
-            from {ORG_NAME} at the mobile number provided below. Message and data
-            rates may apply. Message frequency varies with the amount of work
-            available. Reply STOP to opt out, HELP for help.
+            ☐ YES. I consent to receive SMS job offers and job-related
+            notifications from {ORG_NAME} at the mobile number provided below.
+            Message and data rates may apply. Message frequency varies with the
+            amount of work available. Reply STOP to opt out, HELP for help.
+          </p>
+          <p className="font-medium">
+            ☐ NO. Do not text me. Contact me about available work by phone call
+            or email instead.
           </p>
         </div>
+
+        <p className="mt-4 rounded-lg border border-slate-300 p-4 text-sm font-medium leading-relaxed text-slate-900">
+          Consent to receive text messages is optional. It is not a condition of
+          joining the {ORG_NAME} contractor roster, of being offered work, or of
+          being paid for work you perform. Choosing NO, or opting out later, does
+          not affect your standing with us in any way.
+        </p>
 
         <dl className="mt-5 space-y-4 text-sm text-slate-700">
           <div>
@@ -70,8 +80,16 @@ export default function ContractorSmsConsentPage() {
               Reply <strong>STOP</strong> to any message, or turn off SMS
               notifications in your account settings. Reply{" "}
               <strong>HELP</strong> for help. Opting out does not remove you from
-              the contractor roster, but you will no longer be alerted when work
-              becomes available.
+              the contractor roster and does not change what you are paid; we
+              contact you about available work by phone or email instead.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-medium text-slate-900">Signing in</dt>
+            <dd className="mt-1">
+              You can sign in to your account with either your email address or
+              your mobile number, so declining text messages does not prevent you
+              from using the system.
             </dd>
           </div>
           <div>

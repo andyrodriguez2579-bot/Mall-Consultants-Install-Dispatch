@@ -60,19 +60,24 @@ export default function PrivacyPage() {
         <section>
           <h2 className="text-base font-semibold text-slate-900">Text messages</h2>
           <p className="mt-2">
-            Contractors on our roster receive text messages relating to work. These
+            Contractors who have opted in receive text messages relating to work. These
             include job offers, confirmation when a job is assigned to you, notice when
             completed work is approved, notice when payment is scheduled or sent, and a
             single-use sign-in link when you ask to access your account.
           </p>
           <p className="mt-2">
-            You consent to these messages when you join our contractor roster and give
-            us your mobile number for that purpose, by signing the{" "}
+            You give this consent separately, by checking YES on the{" "}
             <Link href="/contractor-sms-consent" className="font-medium text-blue-700">
               contractor SMS consent form
-            </Link>
-            . Message frequency varies with how much work is available. Message and data
-            rates may apply.
+            </Link>{" "}
+            during onboarding. Message frequency varies with how much work is available.
+            Message and data rates may apply.
+          </p>
+          <p className="mt-2 font-medium text-slate-900">
+            Consent to receive text messages is optional. It is not a condition of
+            joining our contractor roster, of being offered work, or of being paid.
+            Contractors who decline are contacted about available work by phone or
+            email, and can sign in using their email address instead.
           </p>
           <p className="mt-2">
             Reply <strong>STOP</strong> to any message to opt out, or turn off SMS
