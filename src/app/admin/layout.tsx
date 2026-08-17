@@ -24,7 +24,9 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-white">
+      {/* Navigation is for working, not for the page that comes out of the
+          printer -- the field ticket prints from inside this layout. */}
+      <header className="border-b border-slate-200 bg-white print:hidden">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
           <Link href="/admin" className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-blue-700">

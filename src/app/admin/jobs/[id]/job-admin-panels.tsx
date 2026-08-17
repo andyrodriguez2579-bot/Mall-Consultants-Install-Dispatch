@@ -240,6 +240,10 @@ function ManagePanel({ job, matches }: { job: Job; matches: ContractorMatch[] })
             </form>
           ) : null}
 
+          <a href={`/admin/jobs/${job.id}/ticket`} className={buttonClass("secondary")}>
+            Field ticket
+          </a>
+
           <form action={duplicateJob}>
             <input type="hidden" name="job_id" value={job.id} />
             <Submit tone="secondary">Duplicate</Submit>
