@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { copiedTitle } from "@/lib/job-title";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { dispatchJob } from "@/lib/dispatch";
@@ -202,7 +203,7 @@ export async function duplicateJob(formData: FormData): Promise<void> {
   const { data: copy } = await supabase
     .from("jobs")
     .insert({
-      title: `${source.title} (copy)`,
+      title: copiedTitle(source.title),
       customer_name: source.customer_name,
       site_name: source.site_name,
       address_line1: source.address_line1,
