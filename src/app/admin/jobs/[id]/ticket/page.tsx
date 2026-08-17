@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { buttonClass } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth";
 import { ORG_NAME } from "@/lib/branding";
 import { formatAddress, formatDateTime, formatMoney, formatPhone } from "@/lib/format";
@@ -81,7 +82,18 @@ export default async function FieldTicketPage({
         <Link href={`/admin/jobs/${job.id}`} className="text-sm font-medium text-blue-700">
           ← Back to job
         </Link>
-        <PrintButton />
+        <div className="flex items-center gap-2">
+          {photos.length > 0 ? (
+            <a
+              href={`/admin/jobs/${job.id}/photos`}
+              className={buttonClass("secondary")}
+              download
+            >
+              Download {photos.length} photo{photos.length === 1 ? "" : "s"}
+            </a>
+          ) : null}
+          <PrintButton />
+        </div>
       </div>
 
       <div className="bg-white p-6 text-slate-900 ring-1 ring-slate-200 print:p-0 print:ring-0">
@@ -102,51 +114,59 @@ export default async function FieldTicketPage({
           </div>
         </header>
 
-        <Section title="Account">
-          <Row label="Customer" value={job.customer_name} />
+        {/* Headings and order follow the report this replaces. The invoicing
+            agent reading it has seen hundreds of the old ones, and a familiar
+            sheet is read correctly at a glance where a rearranged one is read
+            twice. */}
+        <Section title="Account & job information">
+          <Row label="Account name" value={job.customer_name} />
+          <Row label="Account #" value={job.account_number} />
           <Row label="Site" value={job.site_name} />
           <Row label="Address" value={formatAddress(job)} />
-          <Row label="Account number" value={job.account_number} />
-          <Row label="Program" value={job.program_name} />
-          <Row label="RSM" value={job.rsm_name} />
+          <Row label="Date completed" value={formatDateTime(job.completed_at)} />
+          <Row label="Job sent by / RSM" value={job.rsm_name} />
+          <Row label="OpCo / program" value={job.program_name} />
           <Row label="Customer reference" value={job.customer_reference} />
-        </Section>
-
-        <Section title="Attendance">
           <Row label="Contractor" value={contractor?.full_name ?? null} />
           <Row
             label="Contractor phone"
             value={contractor?.phone ? formatPhone(contractor.phone) : null}
           />
-          <Row label="On site" value={formatDateTime(job.arrival_confirmed_at)} />
-          <Row label="Started" value={formatDateTime(job.started_at)} />
-          <Row label="Completed" value={formatDateTime(job.completed_at)} />
           <Row label="Site contact" value={job.site_contact_name} />
+          <Row label="On site" value={formatDateTime(job.arrival_confirmed_at)} />
         </Section>
 
-        <Section title="Work performed" wide>
+        <Section title="Work order / scope requested" wide>
           <p className="whitespace-pre-wrap text-sm leading-relaxed">{job.scope}</p>
         </Section>
 
         {lines.length > 0 ? (
-          <Section title="Items installed" wide>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-300 text-left">
-                  <th className="py-1 font-semibold">Description</th>
-                  <th className="w-20 py-1 text-right font-semibold">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
+          <>
+            <Section title="Work completed" wide>
+              <ol className="list-decimal space-y-0.5 pl-5 text-sm">
                 {lines.map((line, index) => (
-                  <tr key={index} className="border-b border-slate-200">
-                    <td className="py-1.5">{line.description}</td>
-                    <td className="py-1.5 text-right tabular-nums">{line.quantity}</td>
-                  </tr>
+                  <li key={index} className="uppercase">
+                    {line.description}
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </Section>
+              </ol>
+            </Section>
+
+            <Section title="Work performed / billable items" wide>
+              <table className="w-full text-sm">
+                <tbody>
+                  {lines.map((line, index) => (
+                    <tr key={index} className="border-b border-slate-200">
+                      <td className="py-1.5">{line.description}</td>
+                      <td className="w-20 py-1.5 text-right tabular-nums">
+                        Qty {line.quantity}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Section>
+          </>
         ) : null}
 
         {job.completion_notes ? (
@@ -158,11 +178,11 @@ export default async function FieldTicketPage({
         ) : null}
 
         {job.start_odometer !== null || job.end_odometer !== null ? (
-          <Section title="Mileage">
+          <Section title="Receipts, expenses & mileage">
             <Row label="Start odometer" value={fmtNumber(job.start_odometer)} />
             <Row label="End odometer" value={fmtNumber(job.end_odometer)} />
-            <Row label="Miles driven" value={fmtNumber(job.contractor_miles)} />
-            <Row label="Payable miles" value={fmtNumber(job.payable_miles)} />
+            <Row label="Mileage" value={miles(job.contractor_miles)} />
+            <Row label="Payable miles" value={miles(job.payable_miles)} />
           </Section>
         ) : null}
 
@@ -236,6 +256,10 @@ export default async function FieldTicketPage({
             ),
           )}
         </div>
+
+        <p className="mt-6 border-t border-slate-200 pt-3 text-center text-xs text-slate-500">
+          {ORG_NAME} - Field Service Report | {job.job_number} | Prepared for invoicing
+        </p>
       </div>
     </div>
   );
@@ -279,4 +303,9 @@ function Row({ label, value }: { label: string; value: string | null | undefined
 function fmtNumber(value: number | null): string | null {
   if (value === null || value === undefined) return null;
   return String(value);
+}
+
+function miles(value: number | null): string | null {
+  if (value === null || value === undefined) return null;
+  return `${value} mi`;
 }
