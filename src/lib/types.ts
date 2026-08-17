@@ -41,6 +41,24 @@ export type AttachmentKind = "brief" | "before" | "after" | "other";
 
 export type SmsStatus = "queued" | "logged" | "sent" | "delivered" | "failed" | "undelivered";
 
+/** No "delivered": a provider accepting an email is not a mailbox receiving it. */
+export type EmailStatus = "queued" | "logged" | "sent" | "failed";
+
+export interface EmailMessage {
+  id: string;
+  to_email: string;
+  subject: string;
+  body: string;
+  provider: string;
+  provider_id: string | null;
+  status: EmailStatus;
+  error: string | null;
+  purpose: string | null;
+  profile_id: string | null;
+  job_id: string | null;
+  created_at: string;
+}
+
 export type RequestStatus = "new" | "converted" | "discarded";
 
 export type AcceptResult =

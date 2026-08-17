@@ -3,7 +3,10 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getSessionUser, homePathFor } from "@/lib/auth";
-import { requestSignInLink } from "@/lib/passwordless";
+import {
+  requestEmailSignInLink as requestEmailLink,
+  requestSignInLink,
+} from "@/lib/passwordless";
 import { createClient } from "@/lib/supabase/server";
 import { normalizePhone } from "@/lib/validation";
 
@@ -64,6 +67,33 @@ export async function requestSmsSignInLink(
   await requestSignInLink(normalizePhone(raw)!);
 
   // Always the same answer, whether or not that number is registered.
+  return { sent: true };
+}
+
+/**
+ * Contractor passwordless sign-in: email me a link.
+ *
+ * The reason this exists at all: with only the SMS form, consenting to text
+ * messages was in practice a condition of using the system, which is the
+ * opposite of what the published consent notice promises.
+ */
+export async function requestEmailSignInLink(
+  _prev: SignInState,
+  formData: FormData,
+): Promise<SignInState> {
+  const parsed = z
+    .string()
+    .trim()
+    .email()
+    .safeParse(formData.get("contractor_email"));
+
+  if (!parsed.success) {
+    return { error: "Enter the email address on file, for example you@example.com." };
+  }
+
+  await requestEmailLink(parsed.data);
+
+  // Always the same answer, whether or not that address is registered.
   return { sent: true };
 }
 

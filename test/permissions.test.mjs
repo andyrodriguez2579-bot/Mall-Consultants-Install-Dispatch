@@ -169,6 +169,33 @@ test("a contractor cannot read outbound SMS records", async () => {
   assert.equal(rows.length, 0);
 });
 
+test("a contractor cannot read outbound email records", async () => {
+  // Sharper than the SMS case it mirrors: a sign-in email body carries a live
+  // single-use link, so a readable table here would be a way to take over
+  // another contractor's account rather than merely a way to snoop.
+  await query(
+    `insert into public.email_messages (to_email, subject, body, purpose, profile_id)
+     values ('ray@example.com', 'Your sign-in link',
+             'https://example.test/auth/link/secret-token', 'sign_in_link', $1)`,
+    [CONTRACTOR.ray],
+  );
+
+  const other = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select id from public.email_messages").then((r) => r.rows),
+  );
+  assert.equal(other.length, 0, "another contractor's sign-in link is not readable");
+
+  const own = await asUser(CONTRACTOR.ray, (c) =>
+    c.query("select id from public.email_messages").then((r) => r.rows),
+  );
+  assert.equal(own.length, 0, "not even the recipient reads it back out of the table");
+
+  const admin = await asUser(ADMIN_ID, (c) =>
+    c.query("select id from public.email_messages").then((r) => r.rows),
+  );
+  assert.ok(admin.length > 0, "an administrator can see what was sent");
+});
+
 test("a contractor cannot read the internal notes written about them", async () => {
   const rows = await asUser(CONTRACTOR.ray, (c) =>
     c.query("select body from public.contractor_notes").then((r) => r.rows),

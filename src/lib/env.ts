@@ -43,9 +43,31 @@ function parse<T extends z.ZodTypeAny>(schema: T, label: string): z.infer<T> {
   return result.data;
 }
 
+const resendSchema = z.object({
+  RESEND_API_KEY: z.string().startsWith("re_", "RESEND_API_KEY should start with re_"),
+  // Must be on a domain verified with Resend. An unverified sender is accepted
+  // by the API and then quietly not delivered, which is the worst failure shape
+  // available, so it is required rather than defaulted.
+  EMAIL_FROM: z.string().min(3, "EMAIL_FROM is required to send email"),
+});
+
 export const supabaseEnv = () => parse(supabaseSchema, "Supabase");
 export const serviceRoleEnv = () => parse(serviceRoleSchema, "Supabase service role");
 export const twilioEnv = () => parse(twilioSchema, "Twilio");
+export const resendEnv = () => parse(resendSchema, "Resend");
+
+/**
+ * Which email driver to use. Defaults to 'dev', which records the message and
+ * prints it rather than sending, so the sign-in flow is walkable end to end
+ * from the admin Messages view before any email provider exists.
+ */
+export function emailDriver(): "dev" | "resend" {
+  const raw = (process.env.EMAIL_DRIVER ?? "dev").toLowerCase();
+  if (raw !== "dev" && raw !== "resend") {
+    throw new Error(`EMAIL_DRIVER must be 'dev' or 'resend', received '${raw}'`);
+  }
+  return raw;
+}
 
 /**
  * Which SMS driver to use. Defaults to 'dev' so a fresh checkout runs the whole

@@ -1,3 +1,4 @@
+import { sendEmail, templates as emailTemplates } from "@/lib/email";
 import { appBaseUrl } from "@/lib/env";
 import { sendSms, templates } from "@/lib/sms";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -103,6 +104,63 @@ export async function requestSignInLink(phone: string): Promise<void> {
     body: templates.signInSms(`${appBaseUrl()}/auth/link/${token}`),
     purpose: "sign_in_link",
     contractorId: profile.role === "contractor" ? profile.id : null,
+    client: admin,
+  });
+}
+
+/**
+ * Email a contractor a fresh sign-in link.
+ *
+ * The counterpart to requestSignInLink, and deliberately identical underneath:
+ * the same login_tokens row, the same 15 minutes, the same single-use
+ * redemption. Only the carrier differs. That matters because it is what makes
+ * SMS genuinely optional -- a contractor who never consents to texts is not a
+ * contractor who cannot get into their own account.
+ *
+ * Also silent about whether the address is registered, for the same reason the
+ * SMS path is: an honest "no such contractor" turns this into a roster oracle
+ * for anyone who can guess at addresses.
+ */
+export async function requestEmailSignInLink(email: string): Promise<void> {
+  const admin = createAdminClient();
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id, full_name, email, role, is_active")
+    // Addresses are not case sensitive in practice, and a contractor typing
+    // their own address with a capital letter is not a failed sign-in.
+    .ilike("email", email)
+    .eq("is_active", true)
+    .maybeSingle<Pick<Profile, "id" | "full_name" | "email" | "role" | "is_active">>();
+
+  if (!profile?.email) return;
+
+  const token = generateToken();
+  const expiresAt = new Date(Date.now() + SIGN_IN_TTL_MINUTES * 60_000).toISOString();
+
+  const { error } = await admin.from("login_tokens").insert({
+    profile_id: profile.id,
+    token_hash: hashToken(token),
+    purpose: "magic_link",
+    expires_at: expiresAt,
+  });
+
+  if (error) {
+    console.error("requestEmailSignInLink: could not store token", error);
+    return;
+  }
+
+  const { subject, body } = emailTemplates.signInEmail(
+    `${appBaseUrl()}/auth/link/${token}`,
+    SIGN_IN_TTL_MINUTES,
+  );
+
+  await sendEmail({
+    to: profile.email,
+    subject,
+    body,
+    purpose: "sign_in_link",
+    profileId: profile.id,
     client: admin,
   });
 }

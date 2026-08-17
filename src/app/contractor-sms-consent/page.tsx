@@ -87,9 +87,10 @@ export default function ContractorSmsConsentPage() {
           <div>
             <dt className="font-medium text-slate-900">Signing in</dt>
             <dd className="mt-1">
-              You can sign in to your account with either your email address or
-              your mobile number, so declining text messages does not prevent you
-              from using the system.
+              You can sign in with either your email address or your mobile
+              number. Whichever you choose, we send you a single-use link that
+              works for 15 minutes, so declining text messages never prevents you
+              from reaching your own account.
             </dd>
           </div>
           <div>
