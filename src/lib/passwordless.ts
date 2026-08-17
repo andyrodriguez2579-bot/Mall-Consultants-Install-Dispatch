@@ -170,6 +170,42 @@ export type LinkRedemption =
   | { ok: false; reason: "invalid" | "expired" | "used" };
 
 /**
+ * Report on a sign-in token without spending it.
+ *
+ * The distinction matters more than it looks. A link sent by text or email is
+ * fetched by machines before a person ever taps it -- messaging apps request it
+ * to build a preview card, mail providers request it to scan for malware -- and
+ * every one of those requests is a GET. A page that redeemed on render was
+ * therefore reliably consumed in transit, and the contractor got "this link has
+ * already been used" on their first tap, which is both true and useless.
+ *
+ * So the page reads state with this, and only the button press spends the
+ * token. Bots do not submit forms.
+ */
+export async function inspectSignInLink(token: string): Promise<LinkRedemption> {
+  const admin = createAdminClient();
+
+  const { data: row } = await admin
+    .from("login_tokens")
+    .select("id, profile_id, expires_at, used_at")
+    .eq("token_hash", hashToken(token))
+    .maybeSingle<{
+      id: string;
+      profile_id: string;
+      expires_at: string;
+      used_at: string | null;
+    }>();
+
+  if (!row) return { ok: false, reason: "invalid" };
+  if (row.used_at) return { ok: false, reason: "used" };
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    return { ok: false, reason: "expired" };
+  }
+
+  return { ok: true, profileId: row.profile_id };
+}
+
+/**
  * Redeem a sign-in token. Single use: the row is claimed with a conditional
  * update, so two taps of the same link cannot both succeed.
  */
