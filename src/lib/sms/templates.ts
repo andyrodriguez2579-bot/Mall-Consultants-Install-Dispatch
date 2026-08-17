@@ -88,12 +88,19 @@ export function assignedSms(
     );
   }
 
+  // Scheduling is the contractor's job from here, and saying so costs a few
+  // characters on one message to one person -- against a site that is not
+  // expecting anyone. It is deliberately absent from the offer, which goes to
+  // everybody and pays per segment; the offer page carries it instead.
   if (job.site_contact_name || job.site_contact_phone) {
     lines.push(
       `Site contact: ${[job.site_contact_name, job.site_contact_phone]
         .filter(Boolean)
         .join(" ")}`,
+      "Call them to schedule the install.",
     );
+  } else {
+    lines.push("Contact the site to schedule the install.");
   }
 
   lines.push("Full work order:", link);

@@ -166,6 +166,11 @@ export default async function AdminJobDetail({
           {job.customer_reference ? (
             <Detail label="Customer reference" value={job.customer_reference} />
           ) : null}
+          {job.account_number ? (
+            <Detail label="Account number" value={job.account_number} />
+          ) : null}
+          {job.program_name ? <Detail label="Program" value={job.program_name} /> : null}
+          {job.rsm_name ? <Detail label="RSM" value={job.rsm_name} /> : null}
           {job.scheduled_pay_date ? (
             <Detail
               label="Payment scheduled"

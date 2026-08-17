@@ -178,6 +178,11 @@ export interface Job {
   access_notes: string | null;
   customer_reference: string | null;
 
+  // Who the account sits under, from the install request (0017).
+  // account_number is above, with the pricing columns it arrived with in 0014.
+  program_name: string | null;
+  rsm_name: string | null;
+
   // Proof of completion lives in the field ticket app; this is the link (0013)
   field_ticket_ref: string | null;
   field_ticket_url: string | null;

@@ -92,6 +92,16 @@ export function OfferActions({
 
       {canAct ? (
         <>
+          {/* Said before accepting, not after. Scheduling is the part of the
+              commitment that is easiest to miss when the pay and the scope are
+              the only things on screen -- and it costs nothing here, unlike a
+              line added to the offer text, which is billed per segment to every
+              contractor the job is offered to. */}
+          <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            If you accept, you contact the customer yourself to arrange the date
+            and time. Their number is released as soon as the job is yours.
+          </p>
+
           <form action={acceptAction}>
             <input type="hidden" name="token" value={token} />
             <Pending tone="success">Accept this job</Pending>

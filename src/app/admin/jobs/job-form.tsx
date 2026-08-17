@@ -268,6 +268,20 @@ export function JobForm({
               className={inputClass}
             />
           </Field>
+          <Field label="Program" error={err.program_name}>
+            <input
+              name="program_name"
+              defaultValue={job?.program_name ?? ""}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="RSM" error={err.rsm_name}>
+            <input
+              name="rsm_name"
+              defaultValue={job?.rsm_name ?? ""}
+              className={inputClass}
+            />
+          </Field>
         </div>
       </Card>
 

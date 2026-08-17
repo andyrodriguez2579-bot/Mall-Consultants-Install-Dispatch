@@ -135,6 +135,10 @@ export default async function ContractorJobDetail({
           {job.customer_reference ? (
             <Detail label="Customer reference" value={job.customer_reference} />
           ) : null}
+          {job.account_number ? (
+            <Detail label="Account number" value={job.account_number} />
+          ) : null}
+          {job.program_name ? <Detail label="Program" value={job.program_name} /> : null}
           {job.field_ticket_ref ? (
             <Detail
               label="Field ticket"
@@ -150,6 +154,33 @@ export default async function ContractorJobDetail({
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Work order detail
           </p>
+
+          {/* The site is not expecting anyone until the contractor rings them.
+              The number was already here, but a number in a details list reads
+              as reference material rather than as the next thing to do, and a
+              job can sit accepted for days on that misunderstanding. Shown
+              until the work actually starts, and tappable, because this is read
+              on a phone. */}
+          {job.status === "assigned" ? (
+            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-900">
+                Call the customer to schedule
+              </p>
+              <p className="mt-1 text-sm text-amber-900">
+                You arrange the date and time directly with the site. Nobody is
+                expecting you until you do.
+              </p>
+              {job.site_contact_phone ? (
+                <a
+                  href={`tel:${job.site_contact_phone}`}
+                  className="mt-3 inline-flex items-center rounded-md bg-amber-900 px-3 py-2 text-sm font-semibold text-white"
+                >
+                  Call {job.site_contact_name ?? formatPhone(job.site_contact_phone)}
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+
           <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Detail
               label="Site contact"

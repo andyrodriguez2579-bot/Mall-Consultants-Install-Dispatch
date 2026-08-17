@@ -35,6 +35,8 @@ function readWorkOrderFields(formData: FormData) {
     access_notes: text("access_notes"),
     customer_reference: text("customer_reference"),
     account_number: text("account_number"),
+    program_name: text("program_name"),
+    rsm_name: text("rsm_name"),
   };
 }
 
