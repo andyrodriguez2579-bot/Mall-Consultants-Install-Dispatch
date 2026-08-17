@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardHeader, EmptyState, ErrorBanner } from "@/components/ui";
+import { Card, CardHeader, EmptyState, ErrorBanner, SuccessBanner } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth";
 import { formatPhone } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
@@ -17,9 +17,14 @@ const STATUS_TONE: Record<ContractorStatus, string> = {
 
 type Row = Contractor & { profile: Pick<Profile, "full_name" | "phone" | "email" | "is_active"> };
 
-export default async function ContractorsPage() {
+export default async function ContractorsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ deleted?: string; login_kept?: string }>;
+}) {
   await requireAdmin();
   const supabase = await createClient();
+  const { deleted, login_kept: loginKept } = await searchParams;
 
   const [{ data: rows, error: rowsError }, { data: skills }, { data: areas }] = await Promise.all([
     supabase
@@ -51,6 +56,21 @@ export default async function ContractorsPage() {
       {rowsError ? (
         <ErrorBanner>
           Could not load contractors: {rowsError.message}
+        </ErrorBanner>
+      ) : null}
+
+      {/* Deletion lands here rather than on the deleted contractor's own page,
+          which can only 404 once they are gone. */}
+      {deleted && !loginKept ? (
+        <SuccessBanner>
+          {deleted} has been deleted. Their email and mobile number are free to use
+          again.
+        </SuccessBanner>
+      ) : null}
+      {deleted && loginKept ? (
+        <ErrorBanner>
+          {deleted} was removed, but their login could not be deleted. Remove it in
+          Supabase → Authentication → Users before re-using that email.
         </ErrorBanner>
       ) : null}
 

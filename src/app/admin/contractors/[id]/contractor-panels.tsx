@@ -12,12 +12,13 @@ import {
   inputClass,
 } from "@/components/ui";
 import { formatDateTime } from "@/lib/format";
-import type { Contractor, ServiceArea, Skill } from "@/lib/types";
+import type { Contractor, Profile, ServiceArea, Skill } from "@/lib/types";
 import {
   type ContractorState,
   addContractorNote,
   deleteContractor,
   setContractorStatus,
+  updateContractor,
   updateContractorSkills,
 } from "../actions";
 
@@ -34,6 +35,7 @@ function Submit({ children, tone = "primary" }: { children: string; tone?: "prim
 
 export function ContractorPanels({
   contractor,
+  profile,
   skills,
   serviceAreas,
   selectedSkillIds,
@@ -41,6 +43,7 @@ export function ContractorPanels({
   notes,
 }: {
   contractor: Contractor;
+  profile: Profile;
   skills: Skill[];
   serviceAreas: ServiceArea[];
   selectedSkillIds: string[];
@@ -52,6 +55,7 @@ export function ContractorPanels({
 
   return (
     <div className="space-y-5">
+      <EditPanel contractor={contractor} profile={profile} />
       <Card>
         <CardHeader
           title="Standing"
@@ -161,6 +165,114 @@ export function ContractorPanels({
 
       <DeletePanel contractorId={contractor.id} />
     </div>
+  );
+}
+
+/**
+ * Correcting the details.
+ *
+ * The mobile number is the one that matters: it is where offers go and how a
+ * contractor signs in, and a wrong one is silent -- offers simply never arrive.
+ * Until this existed the only remedy for a typo was to delete the contractor
+ * and add them again, which threw away their history to fix a digit.
+ */
+function EditPanel({ contractor, profile }: { contractor: Contractor; profile: Profile }) {
+  const [state, action] = useActionState(updateContractor, EMPTY);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Details"
+        description="The mobile number is where job offers are sent and how this contractor signs in."
+      />
+      <form action={action} className="space-y-4 p-4 sm:p-5">
+        <input type="hidden" name="contractor_id" value={contractor.id} />
+        {state.error ? <ErrorBanner>{state.error}</ErrorBanner> : null}
+        {state.success ? <SuccessBanner>{state.success}</SuccessBanner> : null}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Full name" error={state.errors?.full_name}>
+            <input
+              name="full_name"
+              defaultValue={profile.full_name}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Mobile" error={state.errors?.phone}>
+            <input
+              name="phone"
+              defaultValue={profile.phone ?? ""}
+              inputMode="tel"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Email" error={state.errors?.email}>
+            <input
+              name="email"
+              type="email"
+              defaultValue={profile.email ?? ""}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Company" error={state.errors?.company_name}>
+            <input
+              name="company_name"
+              defaultValue={contractor.company_name ?? ""}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Travel radius (miles)" error={state.errors?.max_travel_miles}>
+            <input
+              name="max_travel_miles"
+              inputMode="numeric"
+              defaultValue={contractor.max_travel_miles ?? ""}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-sm text-slate-800">
+            <input
+              type="checkbox"
+              name="sms_opt_in"
+              defaultChecked={contractor.sms_opt_in}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Send job offers by text message
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-800">
+            <input
+              type="checkbox"
+              name="is_available"
+              defaultChecked={contractor.is_available}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Currently available for work
+          </label>
+        </div>
+
+        <Submit>Save changes</Submit>
+      </form>
+    </Card>
+  );
+}
+
+function Field({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-sm font-medium text-slate-800">{label}</span>
+      <div className="mt-1.5">{children}</div>
+      {error ? <p className="mt-1 text-xs text-rose-600">{error}</p> : null}
+    </label>
   );
 }
 

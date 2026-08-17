@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -180,6 +181,128 @@ export async function createContractor(
   return { success: `${parsed.data.full_name} added. Approve them to start dispatching.` };
 }
 
+/**
+ * Correct a contractor's details.
+ *
+ * The email and mobile number are not just contact details: they are the
+ * credentials. A contractor signs in by asking for a link sent to the number on
+ * file, so a number corrected in `profiles` alone would leave them unable to
+ * sign in and unreachable by dispatch, with nothing on screen to say why. The
+ * auth user is therefore updated first -- it is also the only one of the three
+ * writes that can fail on uniqueness -- and the profile is rolled back to match
+ * if a later write fails, because a contractor who half-changed their number is
+ * worse than one who never changed it.
+ */
+export async function updateContractor(
+  _prev: ContractorState,
+  formData: FormData,
+): Promise<ContractorState> {
+  await requireAdmin();
+
+  const contractorId = formData.get("contractor_id");
+  if (typeof contractorId !== "string") return { error: "Contractor not found." };
+
+  const parsed = contractorFormSchema.safeParse({
+    full_name: formData.get("full_name") ?? "",
+    phone: formData.get("phone") ?? "",
+    email: formData.get("email") ?? "",
+    company_name: formData.get("company_name") ?? "",
+    max_travel_miles: formData.get("max_travel_miles") ?? "",
+  });
+
+  if (!parsed.success) return { errors: fieldErrors(parsed.error) };
+
+  const admin = createAdminClient();
+
+  const { data: before } = await admin
+    .from("profiles")
+    .select("full_name, phone, email")
+    .eq("id", contractorId)
+    .maybeSingle<{ full_name: string; phone: string | null; email: string | null }>();
+
+  if (!before) return { error: "Contractor not found." };
+
+  const { error: authError } = await admin.auth.admin.updateUserById(contractorId, {
+    email: parsed.data.email,
+    phone: parsed.data.phone,
+    email_confirm: true,
+    phone_confirm: true,
+    user_metadata: { full_name: parsed.data.full_name },
+  });
+
+  if (authError) {
+    return {
+      error: /already|registered|exists|duplicate/i.test(authError.message)
+        ? "That email address or mobile number is already registered to another account."
+        : authError.message,
+    };
+  }
+
+  const restoreAuth = async () => {
+    await admin.auth.admin.updateUserById(contractorId, {
+      email: before.email ?? undefined,
+      phone: before.phone ?? undefined,
+      email_confirm: true,
+      phone_confirm: true,
+    });
+  };
+
+  const { error: profileError } = await admin
+    .from("profiles")
+    .update({
+      full_name: parsed.data.full_name,
+      phone: parsed.data.phone,
+      email: parsed.data.email,
+    })
+    .eq("id", contractorId);
+
+  if (profileError) {
+    await restoreAuth();
+    return { error: profileError.message };
+  }
+
+  const { error: contractorError } = await admin
+    .from("contractors")
+    .update({
+      company_name: parsed.data.company_name,
+      max_travel_miles: parsed.data.max_travel_miles,
+      sms_opt_in: formData.get("sms_opt_in") === "on",
+      is_available: formData.get("is_available") === "on",
+    })
+    .eq("id", contractorId);
+
+  if (contractorError) {
+    await admin.from("profiles").update(before).eq("id", contractorId);
+    await restoreAuth();
+    return { error: contractorError.message };
+  }
+
+  // Recorded field by field: a mobile number that changes is the difference
+  // between offers arriving and vanishing, and "who changed it, and when" is
+  // the first question when they stop arriving.
+  const changes: Record<string, { from: string | null; to: string }> = {};
+  if (before.full_name !== parsed.data.full_name) {
+    changes.full_name = { from: before.full_name, to: parsed.data.full_name };
+  }
+  if (before.phone !== parsed.data.phone) {
+    changes.phone = { from: before.phone, to: parsed.data.phone };
+  }
+  if (before.email !== parsed.data.email) {
+    changes.email = { from: before.email, to: parsed.data.email };
+  }
+
+  await admin.rpc("write_audit", {
+    p_entity_type: "contractor",
+    p_entity_id: contractorId,
+    p_action: "contractor.updated",
+    p_detail: changes,
+  });
+
+  revalidatePath(`/admin/contractors/${contractorId}`);
+  revalidatePath("/admin/contractors");
+  return { success: "Details updated." };
+}
+
 export async function setContractorStatus(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
   const contractorId = formData.get("contractor_id");
@@ -345,12 +468,15 @@ export async function deleteContractor(
   if (profileError) return { error: profileError.message };
 
   const { error: authError } = await admin.auth.admin.deleteUser(contractorId);
-  if (authError) {
-    return {
-      error: `${name} was removed, but their login could not be deleted: ${authError.message}. Remove it in Supabase → Authentication → Users before re-using that email.`,
-    };
-  }
 
   revalidatePath("/admin/contractors");
-  return { success: `${name} has been deleted. Their email and phone number are free to use again.` };
+
+  // Everything below reports on a contractor who no longer exists, so it cannot
+  // report from their own page: re-rendering it after a successful deletion is
+  // what produced a 404 in place of the confirmation. Leave for the list and
+  // carry the outcome in the URL. redirect() signals by throwing, so it goes
+  // last and nothing may follow it.
+  const params = new URLSearchParams({ deleted: name });
+  if (authError) params.set("login_kept", "1");
+  redirect(`/admin/contractors?${params.toString()}`);
 }

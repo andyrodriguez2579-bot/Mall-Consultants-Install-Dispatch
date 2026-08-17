@@ -73,18 +73,13 @@ export default async function ContractorDetail({
         ) : null}
       </div>
 
+      {/* Only what is derived, or decided elsewhere. Everything an admin types
+          now lives in the editable panel below, so there is one place to change
+          a number rather than a display kept in step with a form. */}
       <Card>
-        <CardHeader title="Details" />
+        <CardHeader title="Summary" />
         <dl className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-3 sm:p-5">
-          <Detail label="Mobile" value={formatPhone(profile.phone)} />
-          <Detail label="Email" value={profile.email ?? "—"} />
           <Detail label="Standing" value={contractor.status} />
-          <Detail label="Available" value={contractor.is_available ? "Yes" : "No"} />
-          <Detail label="SMS alerts" value={contractor.sms_opt_in ? "On" : "Off"} />
-          <Detail
-            label="Travel radius"
-            value={contractor.max_travel_miles ? `${contractor.max_travel_miles} mi` : "—"}
-          />
           <Detail label="Approved" value={formatDateTime(contractor.approved_at)} />
           <Detail label="Lifetime paid" value={formatMoney(earnedCents)} />
         </dl>
@@ -92,6 +87,7 @@ export default async function ContractorDetail({
 
       <ContractorPanels
         contractor={contractor}
+        profile={profile}
         skills={(skills ?? []) as Skill[]}
         serviceAreas={(areas ?? []) as ServiceArea[]}
         selectedSkillIds={((mySkills ?? []) as Array<{ skill_id: string }>).map((s) => s.skill_id)}
