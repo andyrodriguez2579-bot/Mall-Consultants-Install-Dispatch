@@ -529,6 +529,52 @@ export async function cancelJob(_prev: FormState, formData: FormData): Promise<F
   return { success: "Job cancelled." };
 }
 
+/**
+ * Put a job on the open board, or take it off.
+ *
+ * The board is where work waits: posted once, visible to every approved
+ * contractor, claimable without anyone being chosen. Dispatch is unchanged and
+ * still the way to push a job that has to be filled today -- a job can be on
+ * the board and dispatched at the same time, and whichever route reaches
+ * someone first, one claim settles it.
+ *
+ * Posting a draft moves it to "ready", because a draft is by definition not
+ * finished enough to be offered to anybody.
+ */
+export async function setBoardPosting(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const jobId = formData.get("job_id");
+  const post = formData.get("post") === "1";
+  if (typeof jobId !== "string") return;
+
+  const supabase = await createClient();
+
+  if (post) {
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("status")
+      .eq("id", jobId)
+      .maybeSingle<{ status: string }>();
+
+    await supabase
+      .from("jobs")
+      .update({
+        board_posted_at: new Date().toISOString(),
+        ...(job?.status === "draft" ? { status: "ready" } : {}),
+      })
+      .eq("id", jobId)
+      .is("assigned_contractor_id", null);
+  } else {
+    await supabase
+      .from("jobs")
+      .update({ board_posted_at: null })
+      .eq("id", jobId);
+  }
+
+  revalidatePath(`/admin/jobs/${jobId}`);
+  revalidatePath("/admin/jobs");
+}
+
 /** Put a job back into the dispatchable pool without reposting it by hand. */
 export async function reopenForDispatch(formData: FormData): Promise<void> {
   await requireAdmin();

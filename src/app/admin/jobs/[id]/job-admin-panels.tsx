@@ -21,6 +21,7 @@ import {
   duplicateJob,
   markPaid,
   reopenForDispatch,
+  setBoardPosting,
   requestRework,
 } from "../actions";
 
@@ -237,6 +238,18 @@ function ManagePanel({ job, matches }: { job: Job; matches: ContractorMatch[] })
             <form action={reopenForDispatch}>
               <input type="hidden" name="job_id" value={job.id} />
               <Submit tone="secondary">Reopen for dispatch</Submit>
+            </form>
+          ) : null}
+
+          {/* Available while the job is unclaimed, including on a draft: a
+              backlog is built before anyone is chosen to do it. */}
+          {!job.assigned_contractor_id ? (
+            <form action={setBoardPosting}>
+              <input type="hidden" name="job_id" value={job.id} />
+              <input type="hidden" name="post" value={job.board_posted_at ? "0" : "1"} />
+              <Submit tone={job.board_posted_at ? "secondary" : "success"}>
+                {job.board_posted_at ? "Remove from board" : "Post to job board"}
+              </Submit>
             </form>
           ) : null}
 

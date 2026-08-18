@@ -51,13 +51,42 @@ test("a contractor can see the job assigned to them", async () => {
   assert.equal(rows[0].status, "in_progress");
 });
 
-test("a contractor's job list contains only their own work", async () => {
+test("a contractor's job list is their own work plus the open board", async () => {
   const rows = await asUser(CONTRACTOR.tom, (c) =>
-    c.query("select id from public.jobs").then((r) => r.rows),
+    c
+      .query(
+        `select id, board_posted_at, assigned_contractor_id, status
+           from public.jobs`,
+      )
+      .then((r) => r.rows),
   );
-  // Tom holds exactly one live offer in the seed and nothing else.
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].id, SEED_OFFERED_JOB);
+
+  // Tom holds exactly one live offer in the seed. Since the board opened, he
+  // can also see work standing on it -- so the property worth asserting is not
+  // a count but that nothing else gets through: every other row he can read
+  // must be posted, unclaimed, and open.
+  assert.ok(
+    rows.some((r) => r.id === SEED_OFFERED_JOB),
+    "the job he was offered is visible",
+  );
+
+  for (const row of rows) {
+    if (row.id === SEED_OFFERED_JOB) continue;
+
+    assert.ok(
+      row.board_posted_at !== null,
+      `job ${row.id} is neither his nor on the board`,
+    );
+    assert.equal(
+      row.assigned_contractor_id,
+      null,
+      `board job ${row.id} is claimed and should have left the board`,
+    );
+    assert.ok(
+      ["ready", "offered", "unfilled"].includes(row.status),
+      `board job ${row.id} is in status ${row.status}, which is not open`,
+    );
+  }
 });
 
 test("an administrator sees every job", async () => {

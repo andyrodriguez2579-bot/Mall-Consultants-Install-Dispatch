@@ -226,6 +226,9 @@ export interface Job {
   program_name: string | null;
   rsm_name: string | null;
 
+  /** Posted to the open board, claimable without an offer (0020). */
+  board_posted_at: string | null;
+
   // Proof of completion lives in the field ticket app; this is the link (0013)
   field_ticket_ref: string | null;
   field_ticket_url: string | null;

@@ -9,6 +9,7 @@ import {
 } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, JobOffer } from "@/lib/types";
+import { type BoardJob, BoardCard } from "./board-card";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ export default async function ContractorJobsPage() {
     { data: offerRows },
     { data: assignedRows },
     { data: historyRows },
+    { data: boardRows },
     { data: recentOfferRows },
   ] = await Promise.all([
       // Live offers: still open, still mine to answer.
@@ -55,6 +57,18 @@ export default async function ContractorJobsPage() {
         .in("status", ["approved", "paid"])
         .order("completed_at", { ascending: false })
         .limit(20),
+      // The open board. Named columns, not *: the street address and the site
+      // contact live on these rows and are released on claiming, not before.
+      supabase
+        .from("jobs")
+        .select(
+          "id, title, site_name, city, state_code, postal_code, scope, contractor_pay_cents, currency, scheduled_start, deadline_at",
+        )
+        .not("board_posted_at", "is", null)
+        .is("assigned_contractor_id", null)
+        .in("status", ["ready", "offered", "unfilled"])
+        .order("board_posted_at", { ascending: false })
+        .limit(50),
       // A week of offers, to work out which of them went to somebody else.
       // Named columns rather than *, because a job this contractor did not win
       // has no reason to put its street address and site contact into a page
@@ -77,6 +91,7 @@ export default async function ContractorJobsPage() {
   );
   const assigned = (assignedRows ?? []) as Job[];
   const history = (historyRows ?? []) as Job[];
+  const board = (boardRows ?? []) as BoardJob[];
 
   /**
    * Jobs offered to this contractor that somebody else took.
@@ -161,6 +176,8 @@ export default async function ContractorJobsPage() {
           </ul>
         )}
       </Card>
+
+      {board.length > 0 ? <BoardCard jobs={board} /> : null}
 
       <Card>
         <CardHeader title="Assigned to me" />
