@@ -61,6 +61,31 @@ export interface EmailMessage {
 
 export type RequestStatus = "new" | "converted" | "discarded";
 
+export type ApplicationStatus = "pending" | "approved" | "declined";
+
+export interface ContractorApplication {
+  id: string;
+  full_name: string;
+  company_name: string | null;
+  phone: string;
+  email: string;
+  city: string | null;
+  state_code: string | null;
+  max_travel_miles: number | null;
+  experience: string | null;
+  sms_opt_in: boolean;
+  /** The wording that was on screen, not a pointer at today's copy. */
+  consent_text: string | null;
+  consented_at: string | null;
+  accepted_terms: boolean;
+  status: ApplicationStatus;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  decline_reason: string | null;
+  contractor_id: string | null;
+  created_at: string;
+}
+
 export type AcceptResult =
   | "accepted"
   | "already_filled"

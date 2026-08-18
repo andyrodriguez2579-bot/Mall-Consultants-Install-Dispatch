@@ -25,6 +25,12 @@ export default async function SignInPage() {
       <p className="mt-8 text-center text-xs text-slate-500">
         Access is limited to approved contractors and {ORG_NAME} staff.
       </p>
+      <p className="mt-3 text-center text-sm text-slate-600">
+        Not with us yet?{" "}
+        <Link href="/apply" className="font-semibold text-blue-700">
+          Apply to join the roster
+        </Link>
+      </p>
       {/* Linked from the one page anybody can reach: a policy nobody can find
           is not published, and campaign reviewers look for exactly this. */}
       <p className="mt-3 text-center text-xs text-slate-500">

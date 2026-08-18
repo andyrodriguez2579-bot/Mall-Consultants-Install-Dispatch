@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { ContractorStatus } from "@/lib/types";
+import type { ContractorApplication, ContractorStatus } from "@/lib/types";
 import { contractorFormSchema, fieldErrors, readMulti } from "@/lib/validation";
 
 export interface ContractorState {
@@ -301,6 +301,115 @@ export async function updateContractor(
   revalidatePath(`/admin/contractors/${contractorId}`);
   revalidatePath("/admin/contractors");
   return { success: "Details updated." };
+}
+
+/**
+ * Turn an application into a contractor.
+ *
+ * Reuses createContractor rather than repeating the provisioning: that path
+ * already rolls the auth user back if the profile insert fails, and already
+ * repairs the half-created account a previous attempt could leave behind. A
+ * second copy of that logic is a second place for it to drift.
+ *
+ * The new contractor lands in "pending", not "approved" -- accepting someone's
+ * application is agreeing to talk to them, not agreeing to dispatch work to
+ * them before their paperwork is seen.
+ */
+export async function approveApplication(
+  _prev: ContractorState,
+  formData: FormData,
+): Promise<ContractorState> {
+  const reviewer = await requireAdmin();
+
+  const applicationId = formData.get("application_id");
+  if (typeof applicationId !== "string") return { error: "Application not found." };
+
+  const admin = createAdminClient();
+
+  const { data: application } = await admin
+    .from("contractor_applications")
+    .select("*")
+    .eq("id", applicationId)
+    .eq("status", "pending")
+    .maybeSingle<ContractorApplication>();
+
+  if (!application) {
+    return { error: "That application has already been dealt with." };
+  }
+
+  const provision = new FormData();
+  provision.set("full_name", application.full_name);
+  provision.set("phone", application.phone);
+  provision.set("email", application.email);
+  provision.set("company_name", application.company_name ?? "");
+  provision.set(
+    "max_travel_miles",
+    application.max_travel_miles === null ? "" : String(application.max_travel_miles),
+  );
+
+  const result = await createContractor({}, provision);
+  if (result.error || result.errors) return result;
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("phone", application.phone)
+    .maybeSingle<{ id: string }>();
+
+  // Carry the consent across. It was given on the form, and a contractor who
+  // ticked the box should not have to be asked again -- nor should one who
+  // left it blank start out subscribed.
+  if (profile) {
+    await admin
+      .from("contractors")
+      .update({ sms_opt_in: application.sms_opt_in })
+      .eq("id", profile.id);
+  }
+
+  await admin
+    .from("contractor_applications")
+    .update({
+      status: "approved",
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: reviewer.id,
+      contractor_id: profile?.id ?? null,
+    })
+    .eq("id", applicationId);
+
+  revalidatePath("/admin/contractors");
+  return {
+    success: `${application.full_name} has been added. Approve them to start dispatching.`,
+  };
+}
+
+/** Decline an application. Kept, not deleted: re-applying is normal. */
+export async function declineApplication(
+  _prev: ContractorState,
+  formData: FormData,
+): Promise<ContractorState> {
+  const reviewer = await requireAdmin();
+
+  const applicationId = formData.get("application_id");
+  if (typeof applicationId !== "string") return { error: "Application not found." };
+
+  const reason = formData.get("decline_reason");
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("contractor_applications")
+    .update({
+      status: "declined",
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: reviewer.id,
+      decline_reason: typeof reason === "string" && reason.trim() ? reason.trim() : null,
+    })
+    .eq("id", applicationId)
+    .eq("status", "pending");
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/contractors");
+  return { success: "Application declined." };
 }
 
 export async function setContractorStatus(formData: FormData): Promise<void> {

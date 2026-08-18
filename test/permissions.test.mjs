@@ -196,6 +196,67 @@ test("a contractor cannot read outbound email records", async () => {
   assert.ok(admin.length > 0, "an administrator can see what was sent");
 });
 
+test("nobody but an administrator can read contractor applications", async () => {
+  // An application holds a private mobile number and email address given by
+  // someone who has no account and no relationship yet. The public form writes
+  // with the service role precisely so this table needs no anon grant.
+  // The harness database persists between runs, and the partial unique index
+  // on pending applications is real, so start from a known state.
+  await query(
+    "delete from public.contractor_applications where phone = '+15165550188'",
+  );
+  await query(
+    `insert into public.contractor_applications
+       (full_name, phone, email, sms_opt_in, accepted_terms)
+     values ('Applicant One', '+15165550188', 'applicant@example.com', true, true)`,
+  );
+
+  // anon holds no grant on public tables at all, so this is refused before RLS
+  // is consulted -- stricter than the policy, and caught the same way the
+  // jobs case above catches it.
+  const anon = await asAnon((c) =>
+    c
+      .query("select id from public.contractor_applications")
+      .then((r) => r.rows)
+      .catch(() => []),
+  );
+  assert.equal(anon.length, 0, "an unauthenticated caller sees nothing");
+
+  const contractor = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select phone from public.contractor_applications").then((r) => r.rows),
+  );
+  assert.equal(contractor.length, 0, "a contractor cannot browse applicants");
+
+  const admin = await asUser(ADMIN_ID, (c) =>
+    c.query("select id from public.contractor_applications").then((r) => r.rows),
+  );
+  assert.ok(admin.length > 0, "an administrator reviews them");
+});
+
+test("a second pending application for one number is refused", async () => {
+  const insert = `insert into public.contractor_applications
+      (full_name, phone, email, accepted_terms)
+    values ('Twice Applied', '+15165550199', 'twice@example.com', true)`;
+
+  await query(
+    "delete from public.contractor_applications where phone = '+15165550199'",
+  );
+  await query(insert);
+  await assert.rejects(
+    () => query(insert),
+    /duplicate key|unique/i,
+    "one open application per number; a duplicate is two things to read",
+  );
+
+  // Declining releases the number, because circumstances change and people
+  // reapply.
+  await query(
+    `update public.contractor_applications set status = 'declined'
+     where phone = '+15165550199'`,
+  );
+  await query(insert);
+});
+
 test("a contractor cannot read the internal notes written about them", async () => {
   const rows = await asUser(CONTRACTOR.ray, (c) =>
     c.query("select body from public.contractor_notes").then((r) => r.rows),

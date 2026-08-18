@@ -1,9 +1,17 @@
 import Link from "next/link";
 import { Card, CardHeader, EmptyState, ErrorBanner, SuccessBanner } from "@/components/ui";
+import { ApplicationsPanel } from "./applications-panel";
+import { ApplyLink } from "./apply-link";
 import { requireAdmin } from "@/lib/auth";
+import { appBaseUrl } from "@/lib/env";
 import { formatPhone } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
-import type { Contractor, ContractorStatus, Profile } from "@/lib/types";
+import type {
+  Contractor,
+  ContractorApplication,
+  ContractorStatus,
+  Profile,
+} from "@/lib/types";
 import { NewContractorForm } from "./new-contractor-form";
 import type { ServiceArea, Skill } from "@/lib/types";
 
@@ -26,7 +34,12 @@ export default async function ContractorsPage({
   const supabase = await createClient();
   const { deleted, login_kept: loginKept } = await searchParams;
 
-  const [{ data: rows, error: rowsError }, { data: skills }, { data: areas }] = await Promise.all([
+  const [
+    { data: rows, error: rowsError },
+    { data: skills },
+    { data: areas },
+    { data: applicationRows },
+  ] = await Promise.all([
     supabase
       .from("contractors")
       // Named by constraint, not by column. `contractors` references
@@ -42,6 +55,11 @@ export default async function ContractorsPage({
       .select("id, name, state_code, postal_prefixes, is_active")
       .eq("is_active", true)
       .order("name"),
+    supabase
+      .from("contractor_applications")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
   ]);
 
   const contractors = (rows ?? []) as unknown as Row[];
@@ -73,6 +91,12 @@ export default async function ContractorsPage({
           Supabase → Authentication → Users before re-using that email.
         </ErrorBanner>
       ) : null}
+
+      <ApplicationsPanel
+        applications={(applicationRows ?? []) as ContractorApplication[]}
+      />
+
+      <ApplyLink url={`${appBaseUrl()}/apply`} />
 
       {(["pending", "approved", "suspended"] as ContractorStatus[]).map((status) => {
         const group = byStatus(status);
