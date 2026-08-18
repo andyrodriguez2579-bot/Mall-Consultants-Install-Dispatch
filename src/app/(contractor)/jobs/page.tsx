@@ -28,8 +28,12 @@ export default async function ContractorJobsPage() {
 
   const nowIso = new Date().toISOString();
 
-  const [{ data: offerRows }, { data: assignedRows }, { data: historyRows }] =
-    await Promise.all([
+  const [
+    { data: offerRows },
+    { data: assignedRows },
+    { data: historyRows },
+    { data: recentOfferRows },
+  ] = await Promise.all([
       // Live offers: still open, still mine to answer.
       supabase
         .from("job_offers")
@@ -51,6 +55,19 @@ export default async function ContractorJobsPage() {
         .in("status", ["approved", "paid"])
         .order("completed_at", { ascending: false })
         .limit(20),
+      // A week of offers, to work out which of them went to somebody else.
+      // Named columns rather than *, because a job this contractor did not win
+      // has no reason to put its street address and site contact into a page
+      // payload -- the approximate location is all that is ever shown.
+      supabase
+        .from("job_offers")
+        .select(
+          "id, created_at, job:job_id(id, title, site_name, city, state_code, postal_code, contractor_pay_cents, currency, assigned_contractor_id)",
+        )
+        .eq("contractor_id", user.id)
+        .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(40),
     ]);
 
   type OfferWithJob = JobOffer & { job: Job | null };
@@ -60,6 +77,43 @@ export default async function ContractorJobsPage() {
   );
   const assigned = (assignedRows ?? []) as Job[];
   const history = (historyRows ?? []) as Job[];
+
+  /**
+   * Jobs offered to this contractor that somebody else took.
+   *
+   * Shown because an offer that simply vanishes teaches nothing, while a short
+   * list of work that went in a few hours is the clearest argument for
+   * answering the next text quickly. Deduplicated by job, since a job offered
+   * over several rounds produces an offer row for each.
+   *
+   * Who took it is never displayed, and could not be: row-level security lets a
+   * contractor read exactly one profile row, their own, so the winner's name is
+   * not reachable from this page even by mistake.
+   */
+  type TakenJob = Pick<
+    Job,
+    | "id"
+    | "title"
+    | "site_name"
+    | "city"
+    | "state_code"
+    | "postal_code"
+    | "contractor_pay_cents"
+    | "currency"
+    | "assigned_contractor_id"
+  >;
+
+  const takenByOthers = [
+    ...new Map(
+      ((recentOfferRows ?? []) as unknown as Array<{ job: TakenJob | null }>)
+        .filter(
+          (o) =>
+            o.job?.assigned_contractor_id &&
+            o.job.assigned_contractor_id !== user.id,
+        )
+        .map((o) => [o.job!.id, o.job!]),
+    ).values(),
+  ].slice(0, 8);
 
   return (
     <div className="space-y-5">
@@ -143,6 +197,44 @@ export default async function ContractorJobsPage() {
           </ul>
         )}
       </Card>
+
+      {/* Deliberately not links and deliberately grey: there is nothing to do
+          with these, and a row that invites a tap only to refuse it is worse
+          than one that plainly reads as gone. The pay stays on, because the
+          amount is the entire point of showing them. */}
+      {takenByOthers.length > 0 ? (
+        <Card>
+          <CardHeader
+            title="Recently taken"
+            description="Offered to you in the last week and picked up by someone else. Offers go to everyone qualified at once, first to accept gets it."
+          />
+          <ul className="divide-y divide-slate-100">
+            {takenByOthers.map((job) => (
+              <li
+                key={job.id}
+                className="flex items-start justify-between gap-3 px-4 py-3 sm:px-5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-500">
+                    {job.title}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {formatApproximateLocation(job)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="text-sm font-semibold tabular-nums text-slate-500">
+                    {formatMoney(job.contractor_pay_cents, job.currency)}
+                  </span>
+                  <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+                    Taken
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
 
       {history.length > 0 ? (
         <Card>

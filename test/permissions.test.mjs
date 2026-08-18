@@ -196,6 +196,59 @@ test("a contractor cannot read outbound email records", async () => {
   assert.ok(admin.length > 0, "an administrator can see what was sent");
 });
 
+test("a losing contractor sees the job was taken, but not by whom", async () => {
+  // The dashboard shows recently taken jobs to make the case for answering the
+  // next text quickly. What it must never show is the winner, and that has to
+  // hold in the database rather than in the page that happens not to render it.
+  const { jobId } = await createOfferedJob({
+    contractorIds: [CONTRACTOR.marcus, CONTRACTOR.ray],
+    title: "Taken-by-someone-else fixture",
+  });
+
+  // assigned_at is not optional here: a CHECK ties it to the assignee, so a
+  // job cannot claim to have a contractor without recording when.
+  await query(
+    `update public.jobs
+        set status = 'assigned', assigned_contractor_id = $1, assigned_at = now()
+      where id = $2`,
+    [CONTRACTOR.ray, jobId],
+  );
+
+  const seen = await asUser(CONTRACTOR.marcus, (c) =>
+    c
+      .query(
+        "select id, title, assigned_contractor_id from public.jobs where id = $1",
+        [jobId],
+      )
+      .then((r) => r.rows),
+  );
+  assert.equal(seen.length, 1, "the job he was offered is still readable");
+  assert.equal(
+    seen[0].assigned_contractor_id,
+    CONTRACTOR.ray,
+    "the winning id is on the row he can read",
+  );
+
+  // ...and is a dead end. One profile row is readable, and it is his own.
+  const winner = await asUser(CONTRACTOR.marcus, (c) =>
+    c
+      .query("select id, full_name, phone from public.profiles where id = $1", [
+        CONTRACTOR.ray,
+      ])
+      .then((r) => r.rows),
+  );
+  assert.equal(winner.length, 0, "the winner's name and number are unreachable");
+
+  const roster = await asUser(CONTRACTOR.marcus, (c) =>
+    c.query("select id from public.contractors").then((r) => r.rows),
+  );
+  assert.deepEqual(
+    roster.map((r) => r.id),
+    [CONTRACTOR.marcus],
+    "the roster is exactly himself",
+  );
+});
+
 test("nobody but an administrator can read contractor applications", async () => {
   // An application holds a private mobile number and email address given by
   // someone who has no account and no relationship yet. The public form writes
