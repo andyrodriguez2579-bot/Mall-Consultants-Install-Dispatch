@@ -127,10 +127,35 @@ export async function submitApplication(
     // The partial unique index on pending applications is the expected clash,
     // and re-applying is not an error worth alarming anyone about.
     if (/duplicate key|unique/i.test(error.message)) {
+      return { submitted: true };
+    }
+
+    // Logged in full, because the applicant is told something calm and general
+    // and would otherwise be the only person who knew anything had gone wrong.
+    // This is the line to search for in the platform logs.
+    console.error("submitApplication: insert failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+
+    // A missing table is a setup step, not a fault of theirs, and telling them
+    // to "try again" would have them retry something that cannot yet succeed.
+    // PostgREST reports it as PGRST205; Postgres as 42P01.
+    const notSetUp =
+      error.code === "PGRST205" ||
+      error.code === "42P01" ||
+      /could not find the table|does not exist/i.test(error.message);
+
+    if (notSetUp) {
       return {
-        submitted: true,
+        error:
+          "This form is not quite finished being set up on our side. Nothing " +
+          "you did is wrong -- please call us and we will take your details.",
       };
     }
+
     return { error: "We could not submit your application. Please try again." };
   }
 
