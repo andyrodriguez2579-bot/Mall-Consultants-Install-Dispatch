@@ -5,6 +5,7 @@ import {
   parseTimestamp,
   reviewVerdict,
 } from "@/lib/automation/install-request";
+import { toParsedRequest } from "@/lib/automation/to-parsed";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -96,31 +97,26 @@ export async function POST(request: Request) {
       source_received_at: parseTimestamp(payload.source_email_received_at),
       needs_review: verdict.needsReview,
       review_reason: verdict.reason,
-      // The extraction is kept whole rather than spread across columns. The
-      // review screen reads it, and keeping it intact means a parser improved
-      // later can be re-run against what was actually received.
+      // Stored in the shape the review screen reads, so an email extracted by
+      // n8n and an install sheet pasted by hand arrive looking identical. The
+      // automation's own fields ride alongside under `automation`, kept whole
+      // so a parser improved later can be re-run against what was received.
       parsed: {
-        prime_contractor: payload.prime_contractor ?? null,
-        operating_company: payload.operating_company ?? null,
-        rsm_name: payload.rsm_name ?? null,
-        customer_name: payload.customer_name ?? null,
-        site_name: payload.site_name ?? null,
-        installation_address: payload.installation_address ?? null,
-        city: payload.city ?? null,
-        state: payload.state ?? null,
-        zip: payload.zip ?? null,
-        site_contact_name: payload.site_contact_name ?? null,
-        site_contact_email: payload.site_contact_email ?? null,
-        site_contact_phone: payload.site_contact_phone ?? null,
-        equipment_type: payload.equipment_type ?? null,
-        equipment_model: payload.equipment_model ?? null,
-        work_order_number: payload.work_order_number ?? null,
-        po_number: payload.po_number ?? null,
-        account_number: payload.account_number ?? null,
-        requested_completion_date: parseDateOnly(payload.requested_completion_date),
-        required_by_date: parseDateOnly(payload.required_by_date),
-        installation_notes: payload.installation_notes ?? null,
-        missing_fields: payload.missing_fields ?? [],
+        ...toParsedRequest(payload),
+        automation: {
+          prime_contractor: payload.prime_contractor ?? null,
+          operating_company: payload.operating_company ?? null,
+          rsm_name: payload.rsm_name ?? null,
+          site_contact_email: payload.site_contact_email ?? null,
+          equipment_type: payload.equipment_type ?? null,
+          equipment_model: payload.equipment_model ?? null,
+          work_order_number: payload.work_order_number ?? null,
+          po_number: payload.po_number ?? null,
+          account_number: payload.account_number ?? null,
+          requested_completion_date: parseDateOnly(payload.requested_completion_date),
+          required_by_date: parseDateOnly(payload.required_by_date),
+          missing_fields: payload.missing_fields ?? [],
+        },
       },
     })
     .select("id")
