@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   acknowledgmentEmail,
-  installsDishMachine,
   siteReadinessEmail,
 } from "../src/lib/email/install-templates.ts";
 
@@ -70,52 +69,31 @@ test("the reference and site travel on both emails", () => {
   }
 });
 
-test("a dish machine install asks the four expensive questions", () => {
-  const { body } = siteReadinessEmail(withDishMachine, ORG);
+test("the dish machine questions are asked as a condition, not a branch", () => {
+  // Every readiness email carries them. Whether a machine is involved is not
+  // reliably legible from the paperwork, so the person standing in the kitchen
+  // decides rather than a parser guessing from an abbreviation.
+  for (const summary of [luigis, withDishMachine]) {
+    const { body } = siteReadinessEmail(summary, ORG);
 
-  assert.match(body, /existing dish machine that needs to be removed/i);
-  assert.match(body, /the overall area where the machine will go/i);
-  assert.match(body, /the drain that will be used/i);
-  assert.match(body, /the electrical supply that will be used/i);
-  assert.match(body, /any stairs between the delivery entrance/i);
+    assert.match(body, /If a dish machine is part of this installation/i);
+    assert.match(body, /existing dish machine that needs to be removed/i);
+    assert.match(body, /photograph of the overall area/i);
+    assert.match(body, /photograph of the drain that will be used/i);
+    assert.match(body, /photograph of the electrical supply/i);
+    assert.match(body, /stairs between the delivery entrance/i);
+  }
 });
 
-test("a job with no dish machine does not ask about drains", () => {
-  const { body } = siteReadinessEmail(luigis, ORG);
-
-  assert.ok(!/drain/i.test(body), "asked about a drain on a dispenser install");
-  assert.ok(!/electrical supply/i.test(body), "asked about electrical needlessly");
-  // Stairs and a photograph of the area still matter for anything delivered.
-  assert.match(body, /any stairs/i);
-  assert.match(body, /photograph of the overall area/i);
-});
-
-test("both emails require the area to be cleared and cleaned", () => {
+test("the readiness email requires the area cleared and cleaned", () => {
   const { body } = siteReadinessEmail(luigis, ORG);
   assert.match(body, /cleared of equipment and wares and has been cleaned/i);
 });
 
-test("a dish machine is recognised however it is written", () => {
-  for (const text of [
-    "single low temp dish machine install",
-    "DISHMACHINE swap out",
-    "install DM at the 3 comp sink",
-    "high-temp dishwasher",
-    "DMI install",
-  ]) {
-    assert.ok(installsDishMachine(text), `missed: ${text}`);
-  }
-});
-
-test("a dispenser-only install is not mistaken for one", () => {
-  for (const text of [
-    "A Program, STD SR Solo (gang) for FC at 3CS",
-    "Install Sink-Rite Solo and Moprite III",
-    "Remove all existing equipment & signage",
-    null,
-    "",
-  ]) {
-    assert.equal(installsDishMachine(text), false, `false positive: ${text}`);
+test("both emails ask when the chemicals arrive", () => {
+  // Without them on site the trip is wasted, so it is asked twice on purpose.
+  for (const { body } of [acknowledgmentEmail(luigis, ORG), siteReadinessEmail(luigis, ORG)]) {
+    assert.match(body, /chemicals are due to be delivered/i);
   }
 });
 
@@ -136,8 +114,12 @@ test("a request with almost nothing in it still produces a sendable email", () =
   for (const { subject, body } of [acknowledgmentEmail(bare, ORG), siteReadinessEmail(bare, ORG)]) {
     assert.ok(subject.trim().length > 0, "a subject is always present");
     assert.ok(body.trim().length > 0, "a body is always present");
-    // No dangling "for undefined" or empty label lines.
+    // No "for undefined", and no labelled line left standing with nothing
+    // after it -- a bare "Site:" reads as information that went missing.
     assert.ok(!/\bnull\b|\bundefined\b/.test(body), `placeholder leaked:\n${body}`);
-    assert.ok(!/:\s*$/m.test(body.replace(/^.*:\s*$/gm, (l) => (/^(Site|Job):/.test(l) ? "x" : l))));
+    assert.ok(
+      !/^(Site|Job|Account)\s*:\s*$/m.test(body),
+      `an empty labelled line was printed:\n${body}`,
+    );
   }
 });

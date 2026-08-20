@@ -24,31 +24,6 @@ export interface RequestSummary {
   siteContactName: string | null;
 }
 
-/**
- * Does this install put a dish machine in?
- *
- * The follow-up questions -- drain, electrical, stairs, an old machine to
- * remove -- only matter for one. Written to err toward asking: a survey nobody
- * needed costs an email, while a machine arriving at a site with no drain
- * within reach costs the trip.
- *
- * "DM" is the abbreviation the price list uses throughout ("DM INSTALL", "DM
- * DISP INSTALL"), and it is matched only as a standalone word so it cannot fire
- * on a word that merely contains those letters.
- */
-export function installsDishMachine(text: string | null | undefined): boolean {
-  if (!text) return false;
-  return [
-    /\bdish\s*machine\b/i,
-    /\bdishmachine\b/i,
-    /\bdish\s*washer\b/i,
-    /\bDM\b/,
-    /\bDMI\b/,
-    /\blow[\s-]?temp\b/i,
-    /\bhigh[\s-]?temp\b/i,
-  ].some((pattern) => pattern.test(text));
-}
-
 function location(summary: RequestSummary): string | null {
   const area = [summary.city, summary.stateCode].filter(Boolean).join(", ");
   const line = [summary.addressLine, area].filter(Boolean).join(", ");
@@ -130,10 +105,15 @@ export function acknowledgmentEmail(
  *
  * Separate from the acknowledgment because it asks the site to do things, and a
  * request for photographs buried under a courtesy note gets read as a courtesy
- * note. The dish machine questions are the expensive ones: a drain out of
- * reach, an electrical supply that is wrong, or a flight of stairs turns a
- * completed install into a second trip, and all three are answerable from a
- * photograph taken in a minute.
+ * note.
+ *
+ * One version, always the same. The dish machine questions are the expensive
+ * ones -- a drain out of reach, the wrong electrical supply, or a flight of
+ * stairs turns a finished install into a second trip -- but whether a machine
+ * is involved is not reliably legible from the paperwork, and branching on a
+ * guess means sometimes not asking. Stating the condition in the text lets the
+ * person standing in the kitchen decide, which they can do and a parser
+ * cannot.
  */
 export function siteReadinessEmail(
   summary: RequestSummary,
@@ -141,7 +121,6 @@ export function siteReadinessEmail(
 ): { subject: string; body: string } {
   const ref = reference(summary);
   const where = location(summary);
-  const dishMachine = installsDishMachine(summary.scope);
 
   const lines: string[] = [];
 
@@ -160,44 +139,31 @@ export function siteReadinessEmail(
   }
 
   lines.push(
-    "Before we schedule, we need a little information so the installer arrives " +
-      "with the right parts and the job is finished in one visit.",
+    "Before the installer arrives, please make sure the installation area is " +
+      "cleared of equipment and wares and has been cleaned. We cannot install " +
+      "into an area that is still in use.",
     "",
-  );
-
-  if (dishMachine) {
-    lines.push(
-      "1. Is there an existing dish machine that needs to be removed?",
-      "",
-      "2. Please reply with photographs of the following. They take a minute " +
-        "and they are the difference between one visit and two:",
-      "   - the overall area where the machine will go",
-      "   - the drain that will be used",
-      "   - the electrical supply that will be used",
-      "",
-      "3. Are there any stairs between the delivery entrance and the " +
-        "installation area?",
-      "",
-    );
-  } else {
-    lines.push(
-      "1. Please reply with a photograph of the overall area where the " +
-        "equipment will be installed.",
-      "",
-      "2. Are there any stairs between the delivery entrance and the " +
-        "installation area?",
-      "",
-    );
-  }
-
-  lines.push(
-    "Before the installer arrives, please make sure the area is cleared of " +
-      "equipment and wares and has been cleaned. We cannot install into an " +
-      "area that is still in use.",
+    "Please also let us know when the chemicals are due to be delivered to the " +
+      "site. We cannot complete the installation without them on hand.",
     "",
-    "Please also let us know when the chemicals are due to be delivered.",
+    // Stated as a condition rather than branched on. Whether a dish machine is
+    // involved is not always legible from the paperwork, and a reader who can
+    // see the equipment in front of them answers it more reliably than a
+    // parser guessing from an abbreviation.
+    "If a dish machine is part of this installation, we also need the " +
+      "following before we schedule. Please reply with:",
     "",
-    "Reply to this email with the answers and photographs and we will get the " +
+    "  - whether there is an existing dish machine that needs to be removed",
+    "  - a photograph of the overall area where the machine will go",
+    "  - a photograph of the drain that will be used",
+    "  - a photograph of the electrical supply that will be used",
+    "  - whether there are stairs between the delivery entrance and the " +
+      "installation area",
+    "",
+    "Those photographs take a minute and they are the difference between one " +
+      "visit and two.",
+    "",
+    "Reply to this email with anything we should know and we will get the " +
       "installation scheduled.",
     "",
     orgName,
