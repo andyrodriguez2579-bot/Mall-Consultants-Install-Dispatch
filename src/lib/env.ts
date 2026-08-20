@@ -57,6 +57,25 @@ export const twilioEnv = () => parse(twilioSchema, "Twilio");
 export const resendEnv = () => parse(resendSchema, "Resend");
 
 /**
+ * Shared secret for the automation endpoints n8n calls.
+ *
+ * Deliberately required rather than defaulted: an intake endpoint that falls
+ * back to "no key configured, allow everything" is an open door to creating
+ * jobs, and it would fail open on exactly the deployment where someone forgot
+ * to set it. Length is checked because a short secret is a guessable one.
+ */
+export function automationApiKey(): string {
+  const key = process.env.AUTOMATION_API_KEY;
+  if (!key || key.length < 24) {
+    throw new Error(
+      "AUTOMATION_API_KEY must be set to at least 24 characters before the " +
+        "automation endpoints can be used.",
+    );
+  }
+  return key;
+}
+
+/**
  * Which email driver to use. Defaults to 'dev', which records the message and
  * prints it rather than sending, so the sign-in flow is walkable end to end
  * from the admin Messages view before any email provider exists.
