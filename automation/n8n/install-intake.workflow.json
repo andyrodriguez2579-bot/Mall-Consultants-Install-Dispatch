@@ -1,0 +1,119 @@
+{
+  "name": "Mall Consultants - Install Intake",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-outlook",
+      "name": "New email in Install Requests",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        -360,
+        0
+      ],
+      "notes": "SET THE FOLDER: open this node and choose Install Requests."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read one installation email into the shape the dispatch app expects.\n//\n// mHelp board assignments carry a labelled table -- Account Name, Email,\n// Address, Job ID -- so they are read exactly, by matching labels, with no AI\n// involved. That is deliberate: it is free, it is the same every time, and it\n// cannot invent a value. Anything it cannot read confidently is passed on with\n// needs_review set, which puts it in the review queue rather than into a job.\n//\n// Emails carrying an Excel install sheet are NOT parsed here. The dispatch app\n// already knows how to read those workbooks; this hands the email over and\n// lets that screen do it.\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const m = item.json;\n\n  // Outlook gives HTML for most mail. Flatten it to text, keeping line breaks,\n  // because every label below sits at the start of its own line.\n  const html = m.body?.content ?? m.bodyHtml ?? '';\n  const plain = m.bodyPreview ?? '';\n  const text = (html\n    ? html\n        // Style and script blocks first. Their contents are not markup, so\n        // stripping tags alone would tip three kilobytes of CSS into the stored\n        // email body. mHelp happens to wrap its CSS in an HTML comment, which\n        // hides it by accident -- this does not rely on that continuing.\n        .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n        .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n        .replace(/<!--[\\s\\S]*?-->/g, ' ')\n        .replace(/<br\\s*\\/?>/gi, '\\n')\n        .replace(/<\\/(p|div|tr|h\\d)>/gi, '\\n')\n        .replace(/<[^>]+>/g, ' ')\n        // Named entities, then numeric ones. Outlook sometimes sends a real\n        // apostrophe and sometimes &#8217;, and a customer stored as\n        // \"Luigi&#8217;s Pizza\" is a name a contractor reads on a work order.\n        .replace(/&nbsp;/gi, ' ')\n        .replace(/&amp;/gi, '&')\n        .replace(/&lt;/gi, '<')\n        .replace(/&gt;/gi, '>')\n        .replace(/&apos;/gi, \"'\")\n        .replace(/&quot;/gi, '\"')\n        .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))\n        .replace(/&#(\\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))\n    : plain)\n    .replace(/\\r/g, '')\n    .replace(/[ \\t]+/g, ' ')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n\n  const lines = text.split('\\n').map((l) => l.trim());\n\n  // Value on the same line as its label. Stops at the next label so a blank\n  // field cannot swallow the one after it.\n  const field = (label) => {\n    const re = new RegExp('^' + label + '\\\\s*:\\\\s*(.*)$', 'i');\n    for (const line of lines) {\n      const hit = line.match(re);\n      if (hit) return (hit[1] || '').trim() || null;\n    }\n    return null;\n  };\n\n  // The line that follows a label, for values that wrap (the address does).\n  const lineAfter = (label) => {\n    const re = new RegExp('^' + label + '\\\\s*:', 'i');\n    for (let i = 0; i < lines.length; i += 1) {\n      if (re.test(lines[i])) {\n        for (let j = i + 1; j < lines.length && j <= i + 3; j += 1) {\n          const next = lines[j];\n          if (next && !/^[A-Za-z /]{3,30}:/.test(next)) return next;\n        }\n        return null;\n      }\n    }\n    return null;\n  };\n\n  const accountName = field('Account Name') || field('Customer Name');\n  const jobId = field('Job ID');\n  const description = field('Description');\n  const emailField = field('Email');\n\n  // \"Three Bridges Cafe - 510245871\" -- the trailing number is the account.\n  let accountNumber = null;\n  if (accountName) {\n    const tail = accountName.match(/[-\\u2013]\\s*(\\d{4,})\\s*$/);\n    if (tail) accountNumber = tail[1];\n  }\n\n  // Address line, then \"City, ST 08887\" underneath it.\n  const addressLine = field('Address');\n  const cityLine = lineAfter('Address');\n  let city = null;\n  let state = null;\n  let zip = null;\n  if (cityLine) {\n    const parts = cityLine.match(/^(.+?),\\s*([A-Za-z]{2})\\s+(\\d{5}(?:-\\d{4})?)\\s*$/);\n    if (parts) {\n      city = parts[1].trim();\n      state = parts[2].toUpperCase();\n      zip = parts[3];\n    }\n  }\n\n  const hasAttachment = Boolean(m.hasAttachments);\n  const looksLikeMhelp = Boolean(accountName && jobId);\n\n  const missing = [];\n  if (!accountName) missing.push('customer_name');\n  if (!addressLine) missing.push('installation_address');\n  if (!city) missing.push('city');\n  if (!state) missing.push('state');\n\n  // An attachment means an install sheet the dispatch app parses itself, so it\n  // goes to the review queue whatever else was readable.\n  let needsReview = false;\n  let reviewReason = null;\n  if (hasAttachment && !looksLikeMhelp) {\n    needsReview = true;\n    reviewReason = 'The email has an attachment to read on the review screen.';\n  } else if (!looksLikeMhelp) {\n    needsReview = true;\n    reviewReason = 'This is not an mHelp assignment; read it by hand.';\n  } else if (missing.length > 0) {\n    needsReview = true;\n    reviewReason = 'Could not read: ' + missing.join(', ') + '.';\n  }\n\n  out.push({\n    json: {\n      source_email_message_id: m.id,\n      source_email_conversation_id: m.conversationId ?? null,\n      source_email_subject: m.subject ?? null,\n      source_email_sender:\n        m.from?.emailAddress?.address ?? m.sender?.emailAddress?.address ?? null,\n      source_email_received_at: m.receivedDateTime ?? null,\n\n      raw_text: text || '(the email had no readable body)',\n\n      customer_name: accountName,\n      site_name: accountName,\n      installation_address: addressLine,\n      city,\n      state,\n      zip,\n\n      site_contact_email: emailField,\n\n      work_order_number: jobId,\n      account_number: accountNumber,\n\n      installation_notes: description,\n\n      missing_fields: missing,\n      needs_review: needsReview,\n      review_reason: reviewReason,\n    },\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "extract",
+      "name": "Read the email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://mall-consultants-install-dispatch.vercel.app/api/automation/install-request",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PASTE_YOUR_AUTOMATION_API_KEY_HERE"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "send",
+      "name": "Send to dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        0
+      ],
+      "notes": "PASTE YOUR KEY: replace PASTE_YOUR_AUTOMATION_API_KEY_HERE in the Authorization header."
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "move",
+        "messageId": "={{ $('Read the email').item.json.source_email_message_id }}"
+      },
+      "id": "move",
+      "name": "Move to Processed",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "notes": "SET THE FOLDER: choose Install Requests/Processed. This only runs when the send above succeeded, so a failed email stays in the inbox for another try."
+    }
+  ],
+  "connections": {
+    "New email in Install Requests": {
+      "main": [
+        [
+          {
+            "node": "Read the email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the email": {
+      "main": [
+        [
+          {
+            "node": "Send to dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to dispatch": {
+      "main": [
+        [
+          {
+            "node": "Move to Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
