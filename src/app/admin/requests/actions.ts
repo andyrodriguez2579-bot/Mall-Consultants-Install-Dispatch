@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { payloadFromStored, toParsedRequest } from "@/lib/automation/to-parsed";
 import { requireAdmin } from "@/lib/auth";
 import { type ParsedRequest, parseInstallRequest } from "@/lib/intake/parse";
 import { sheetInstructions, sheetScope, sheetTitle } from "@/lib/intake/summary";
@@ -273,18 +274,34 @@ export async function reparseRequest(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   const [{ data: request }, { data: priceList }] = await Promise.all([
-    supabase.from("install_requests").select("raw_text").eq("id", requestId).maybeSingle<{
-      raw_text: string;
-    }>(),
+    supabase
+      .from("install_requests")
+      .select("raw_text, source, parsed")
+      .eq("id", requestId)
+      .maybeSingle<{
+        raw_text: string;
+        source: string;
+        parsed: Record<string, unknown> | null;
+      }>(),
     supabase.from("price_list_items").select("code, name").eq("is_active", true),
   ]);
 
   if (!request) return;
 
-  const parsed = parseInstallRequest(
-    request.raw_text,
-    (priceList ?? []) as Array<Pick<PriceListItem, "code" | "name">>,
-  );
+  // An emailed request was already read by the workflow, which knows mHelp's
+  // labels. The generic text parser does not, so re-running it here would
+  // replace a good extraction with a worse one. Rebuild from what the
+  // automation sent while that is still recoverable, and fall back to reading
+  // the text only when it is not.
+  const recovered =
+    request.source === "automation" ? payloadFromStored(request.parsed) : null;
+
+  const parsed = recovered
+    ? toParsedRequest(recovered)
+    : parseInstallRequest(
+        request.raw_text,
+        (priceList ?? []) as Array<Pick<PriceListItem, "code" | "name">>,
+      );
 
   await supabase
     .from("install_requests")

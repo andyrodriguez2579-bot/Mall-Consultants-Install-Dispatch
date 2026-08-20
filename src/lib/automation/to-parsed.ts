@@ -63,6 +63,62 @@ function buildScope(payload: InstallRequestPayload): string {
   return trimmed || notes;
 }
 
+/**
+ * Recover the automation's own extraction from a stored request.
+ *
+ * Two shapes exist in the wild. Requests written before the review screen's
+ * format was matched hold flat keys at the top level; later ones keep them
+ * under `automation` beside the ParsedRequest. Reading both means "re-run
+ * extraction" repairs the early ones instead of falling back to the generic
+ * text parser, which knows nothing about mHelp's labels and would do a worse
+ * job than the workflow already did.
+ *
+ * Returns null when there is nothing of the sort to recover, which is the
+ * signal to use the text parser after all.
+ */
+export function payloadFromStored(
+  stored: Record<string, unknown> | null | undefined,
+): InstallRequestPayload | null {
+  if (!stored) return null;
+
+  const nested = stored.automation as Record<string, unknown> | undefined;
+  const str = (key: string): string | null => {
+    const value = nested?.[key] ?? stored[key];
+    return typeof value === "string" && value.trim() ? value : null;
+  };
+
+  // The address is the tell: a ParsedRequest holds address_line1 as an object,
+  // while the automation's own shape holds installation_address as a string.
+  const address = str("installation_address");
+  const customer = str("customer_name");
+  if (!address && !customer) return null;
+
+  return {
+    source_email_message_id: "recovered",
+    raw_text: "recovered",
+    customer_name: customer,
+    site_name: str("site_name"),
+    installation_address: address,
+    city: str("city"),
+    state: str("state"),
+    zip: str("zip"),
+    site_contact_name: str("site_contact_name"),
+    site_contact_email: str("site_contact_email"),
+    site_contact_phone: str("site_contact_phone"),
+    work_order_number: str("work_order_number"),
+    po_number: str("po_number"),
+    account_number: str("account_number"),
+    installation_notes: str("installation_notes"),
+    equipment_type: str("equipment_type"),
+    equipment_model: str("equipment_model"),
+    prime_contractor: str("prime_contractor"),
+    operating_company: str("operating_company"),
+    rsm_name: str("rsm_name"),
+    required_by_date: str("required_by_date"),
+    requested_completion_date: str("requested_completion_date"),
+  } as InstallRequestPayload;
+}
+
 /** The job form's own requirements, worded as the review screen words them. */
 const REQUIRED: Array<[keyof ParsedRequest, string]> = [
   ["customer_name", "Customer"],

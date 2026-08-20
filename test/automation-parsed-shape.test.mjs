@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { installRequestPayload } from "../src/lib/automation/install-request.ts";
-import { toParsedRequest } from "../src/lib/automation/to-parsed.ts";
+import { payloadFromStored, toParsedRequest } from "../src/lib/automation/to-parsed.ts";
 
 /**
  * The review screen reads a ParsedRequest, and reads it by exact name.
@@ -100,6 +100,71 @@ test("a missing field stays null rather than becoming an empty box", () => {
   assert.equal(parsed.title, null);
   assert.equal(parsed.scope, "");
   assert.deepEqual(parsed.suggestedItems, []);
+});
+
+test("re-running extraction repairs a request stored in the old flat shape", () => {
+  // Exactly what the first live request wrote, before the shape was matched.
+  // "Re-run extraction" has to rebuild from this rather than fall back to the
+  // generic text parser, which knows nothing about mHelp's labels.
+  const asStored = {
+    prime_contractor: null,
+    operating_company: null,
+    rsm_name: null,
+    customer_name: "Luigi's Pizza - 509103264",
+    site_name: "Luigi's Pizza - 509103264",
+    installation_address: "16 Skyline Lake Drive",
+    city: "Ringwood",
+    state: "NJ",
+    zip: "07456",
+    site_contact_email: "ilforno1260@hotmail.com",
+    work_order_number: "70069233",
+    account_number: "509103264",
+    installation_notes: "A Program, STD SR Solo (gang) for FC at 3CS.",
+    missing_fields: [],
+  };
+
+  const recovered = payloadFromStored(asStored);
+  assert.ok(recovered, "the old shape is recognised");
+
+  const parsed = toParsedRequest(recovered);
+  assert.equal(parsed.customer_name?.value, "Luigi's Pizza - 509103264");
+  assert.equal(parsed.address_line1?.value, "16 Skyline Lake Drive");
+  assert.equal(parsed.city?.value, "Ringwood");
+  assert.equal(parsed.state_code?.value, "NJ");
+  assert.equal(parsed.postal_code?.value, "07456");
+  assert.equal(parsed.customer_reference?.value, "70069233");
+  assert.deepEqual(parsed.missing, []);
+});
+
+test("re-running extraction reads the newer nested shape too", () => {
+  const asStored = {
+    // A ParsedRequest sits at the top level now; the automation's own fields
+    // live underneath it.
+    customer_name: { value: "Three Bridges Cafe", evidence: "x", basis: "label" },
+    automation: {
+      customer_name: "Three Bridges Cafe - 510245871",
+      installation_address: "430 Main St",
+      city: "Three Bridges",
+      state: "NJ",
+      zip: "08887",
+      work_order_number: "69800343",
+    },
+  };
+
+  const recovered = payloadFromStored(asStored);
+  assert.ok(recovered);
+  // The nested value wins: it is the automation's own reading, not the one the
+  // review screen may since have had edited into it.
+  assert.equal(recovered.customer_name, "Three Bridges Cafe - 510245871");
+  assert.equal(toParsedRequest(recovered).postal_code?.value, "08887");
+});
+
+test("a hand-pasted request is left to the text parser", () => {
+  // Nothing of the automation's shape present, so there is nothing to rebuild
+  // from and the caller must fall back.
+  assert.equal(payloadFromStored({ scope: "some pasted text", missing: [] }), null);
+  assert.equal(payloadFromStored(null), null);
+  assert.equal(payloadFromStored(undefined), null);
 });
 
 test("a PO stands in when there is no work order", () => {
