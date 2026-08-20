@@ -7,7 +7,7 @@ import {
   readInstallContacts,
   readinessRecipients,
   splitCityStateZip,
-} from "../src/lib/intake/contacts.ts";
+} from "../src/lib/intake/workbook.ts";
 
 /**
  * The contact block on an INSTALL sheet.
