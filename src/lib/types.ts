@@ -310,6 +310,44 @@ export interface AppSetting {
   updated_at: string;
 }
 
+export type InvoiceStatus = "draft" | "sent" | "void";
+
+/**
+ * A job's own copy of the customer's bill. Reads job_pricing / job_service_lines
+ * once, at creation, into invoice_line_items -- after that the two are
+ * unrelated, and editing an invoice cannot move what a contractor was paid.
+ */
+export interface Invoice {
+  id: string;
+  job_id: string;
+  invoice_number: number;
+  status: InvoiceStatus;
+  bill_to_name: string | null;
+  bill_to_address: string | null;
+  notes: string | null;
+  subtotal_cents: number;
+  sent_at: string | null;
+  sent_to_email: string | null;
+  email_message_id: string | null;
+  send_error: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvoiceLineItem {
+  id: string;
+  invoice_id: string;
+  description: string;
+  unit_price_cents: number;
+  quantity: number;
+  line_total_cents: number;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface InstallRequest {
   id: string;
   status: RequestStatus;

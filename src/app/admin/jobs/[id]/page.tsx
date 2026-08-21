@@ -25,6 +25,8 @@ import { createClient } from "@/lib/supabase/server";
 import type {
   AuditEntry,
   ContractorMatch,
+  Invoice,
+  InvoiceLineItem,
   Job,
   JobAttachment,
   JobFinancials,
@@ -33,6 +35,7 @@ import type {
   Skill,
 } from "@/lib/types";
 import { DispatchPanel } from "./dispatch-panel";
+import { InvoicePanel } from "./invoice-panel";
 import { JobAdminPanels } from "./job-admin-panels";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +67,7 @@ export default async function AdminJobDetail({
     { data: matchRows },
     { data: auditRows },
     { data: financials },
+    { data: invoiceRows },
   ] = await Promise.all([
     supabase
       // No embed: see profilesByIds in src/lib/people.ts for why reaching a
@@ -89,7 +93,26 @@ export default async function AdminJobDetail({
       .order("created_at", { ascending: false })
       .limit(30),
     supabase.from("job_financials").select("*").eq("job_id", id).maybeSingle<JobFinancials>(),
+    supabase
+      .from("invoices")
+      .select("*")
+      .eq("job_id", id)
+      .order("created_at", { ascending: false }),
   ]);
+
+  const invoices = (invoiceRows ?? []) as Invoice[];
+  // At most one of these is not void, per the database's own unique index.
+  const liveInvoice = invoices.find((inv) => inv.status !== "void") ?? null;
+  const voidedInvoices = invoices.filter((inv) => inv.status === "void");
+
+  const { data: invoiceLineRows } = liveInvoice
+    ? await supabase
+        .from("invoice_line_items")
+        .select("*")
+        .eq("invoice_id", liveInvoice.id)
+        .order("sort_order")
+    : { data: [] as InvoiceLineItem[] };
+  const invoiceLines = (invoiceLineRows ?? []) as InvoiceLineItem[];
 
   const offerPeople = await profilesByIds(
     supabase,
@@ -479,6 +502,15 @@ export default async function AdminJobDetail({
             )}
           </div>
         </Card>
+      ) : null}
+
+      {["completed", "approved", "paid"].includes(job.status) || invoices.length > 0 ? (
+        <InvoicePanel
+          job={job}
+          liveInvoice={liveInvoice}
+          lines={invoiceLines}
+          voided={voidedInvoices}
+        />
       ) : null}
 
       <JobAdminPanels job={job} matches={matches} />

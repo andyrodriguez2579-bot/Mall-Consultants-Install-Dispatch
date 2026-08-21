@@ -15,3 +15,6 @@ export const APP_TITLE = `${ORG_NAME} ${PRODUCT_NAME}`;
  * rejected or a number filtered later.
  */
 export const SMS_SENDER_LABEL = ORG_NAME;
+
+/** Every finished invoice goes here -- the bookkeeper, not a per-job address. */
+export const INVOICE_RECIPIENT_EMAIL = "jginstallations@yahoo.com";
