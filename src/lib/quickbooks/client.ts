@@ -113,8 +113,22 @@ interface TokenResponse {
   error_description?: string;
 }
 
+/**
+ * Every failure from Intuit's side carries `intuit_tid` -- their own request
+ * id -- attached here rather than dropped, because it is the one thing their
+ * support team asks for first when troubleshooting a specific failed call.
+ */
+export class QuickbooksApiError extends Error {
+  readonly intuitTid: string | null;
+
+  constructor(message: string, intuitTid: string | null) {
+    super(intuitTid ? `${message} (intuit_tid: ${intuitTid})` : message);
+    this.intuitTid = intuitTid;
+  }
+}
+
 /** Thrown specifically for `invalid_grant` -- a refresh token that is dead and cannot be retried, only replaced by reconnecting. */
-export class QuickbooksInvalidGrantError extends Error {}
+export class QuickbooksInvalidGrantError extends QuickbooksApiError {}
 
 function tokensFromResponse(payload: TokenResponse): QuickbooksTokens {
   const now = Date.now();
@@ -142,8 +156,9 @@ async function requestTokens(body: URLSearchParams): Promise<QuickbooksTokens> {
   const payload = (await response.json()) as TokenResponse;
   if (!response.ok) {
     const message = payload.error_description ?? payload.error ?? `QuickBooks returned ${response.status}`;
-    if (payload.error === "invalid_grant") throw new QuickbooksInvalidGrantError(message);
-    throw new Error(message);
+    const intuitTid = response.headers.get("intuit_tid");
+    if (payload.error === "invalid_grant") throw new QuickbooksInvalidGrantError(message, intuitTid);
+    throw new QuickbooksApiError(message, intuitTid);
   }
   return tokensFromResponse(payload);
 }
@@ -200,7 +215,7 @@ export async function quickbooksApiRequest<T>(
     const message =
       (payload as { Fault?: { Error?: Array<{ Message?: string; Detail?: string }> } })?.Fault
         ?.Error?.[0]?.Detail ?? `QuickBooks API returned ${response.status}`;
-    throw new Error(message);
+    throw new QuickbooksApiError(message, response.headers.get("intuit_tid"));
   }
   return payload as T;
 }
