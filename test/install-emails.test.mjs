@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   acknowledgmentEmail,
+  composeDraftEmails,
   siteReadinessEmail,
 } from "../src/lib/email/install-templates.ts";
 
@@ -122,4 +123,71 @@ test("a request with almost nothing in it still produces a sendable email", () =
       `an empty labelled line was printed:\n${body}`,
     );
   }
+});
+
+/**
+ * What gets drafted, decided by what is actually known.
+ *
+ * A request with neither a thread to reply into nor a real readiness
+ * recipient produces nothing -- there is no one to send either email to, and
+ * a row with an empty `to_emails` fails the database's own check constraint.
+ */
+
+test("a reply thread produces exactly an acknowledgment", () => {
+  const rows = composeDraftEmails({
+    summary: luigis,
+    orgName: ORG,
+    replyThread: {
+      toEmail: "requester@ssdcsoap.com",
+      messageId: "AAMk-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, "acknowledgment");
+  assert.deepEqual(rows[0].to_emails, ["requester@ssdcsoap.com"]);
+  assert.equal(rows[0].reply_to_message_id, "AAMk-1");
+  assert.equal(rows[0].conversation_id, "conv-1");
+  assert.match(rows[0].body, /A Program, STD SR Solo \(gang\)/);
+});
+
+test("readiness recipients produce exactly a site-readiness note", () => {
+  const rows = composeDraftEmails({
+    summary: luigis,
+    orgName: ORG,
+    readinessRecipients: ["fred@skinnylouie.com", "russell.arnold@pfgc.com", null],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, "site_readiness");
+  assert.deepEqual(rows[0].to_emails, ["fred@skinnylouie.com", "russell.arnold@pfgc.com"]);
+  assert.equal(rows[0].reply_to_message_id, null);
+});
+
+test("both can be drafted for the same request", () => {
+  const rows = composeDraftEmails({
+    summary: luigis,
+    orgName: ORG,
+    replyThread: { toEmail: "requester@ssdcsoap.com", messageId: null, conversationId: null },
+    readinessRecipients: ["fred@skinnylouie.com"],
+  });
+
+  assert.deepEqual(
+    rows.map((r) => r.kind).sort(),
+    ["acknowledgment", "site_readiness"],
+  );
+});
+
+test("nothing is drafted without a thread or a real recipient", () => {
+  assert.deepEqual(composeDraftEmails({ summary: luigis, orgName: ORG }), []);
+  assert.deepEqual(
+    composeDraftEmails({
+      summary: luigis,
+      orgName: ORG,
+      replyThread: { toEmail: "not-an-email", messageId: null, conversationId: null },
+      readinessRecipients: [null, ""],
+    }),
+    [],
+  );
 });

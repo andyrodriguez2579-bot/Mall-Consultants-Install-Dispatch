@@ -3,11 +3,23 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { payloadFromStored, toParsedRequest } from "@/lib/automation/to-parsed";
+import { ORG_NAME } from "@/lib/branding";
+import {
+  payloadFromStored,
+  summaryFromParsedRequest,
+  toParsedRequest,
+} from "@/lib/automation/to-parsed";
 import { requireAdmin } from "@/lib/auth";
+import { composeDraftEmails } from "@/lib/email/install-templates";
 import { type ParsedRequest, parseInstallRequest } from "@/lib/intake/parse";
 import { sheetInstructions, sheetScope, sheetTitle } from "@/lib/intake/summary";
-import type { SheetDetails, SheetItem, SheetSection } from "@/lib/intake/workbook";
+import {
+  readinessRecipients,
+  type InstallContacts,
+  type SheetDetails,
+  type SheetItem,
+  type SheetSection,
+} from "@/lib/intake/workbook";
 import { createClient } from "@/lib/supabase/server";
 import type { Job, PriceListItem } from "@/lib/types";
 import { readPricingForm, upsertJobPricing, validatePricing } from "@/lib/pricing-form";
@@ -28,8 +40,60 @@ const MAX_SHEET_CHARS = 80_000;
 const SECTIONS: SheetSection[] = ["install", "dispenser_equipment", "chemicals"];
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/**
+ * The contact block, if the sheet had one.
+ *
+ * This is who the site-readiness email goes to, so every field is bounded and
+ * every address is shape-checked the same as the rest of this form -- nothing
+ * the browser sends is trusted further than that.
+ */
+function readContactsField(source: Record<string, unknown>): InstallContacts | null {
+  const raw = source.contacts;
+  if (typeof raw !== "object" || raw === null) return null;
+  const c = raw as Record<string, unknown>;
+
+  const str = (v: unknown, max: number): string | null => {
+    if (typeof v !== "string") return null;
+    const trimmed = v.slice(0, max).trim();
+    return trimmed || null;
+  };
+  const email = (v: unknown): string | null => {
+    const s = str(v, 200);
+    return s && EMAIL_SHAPE.test(s) ? s : null;
+  };
+  const machineModels = (Array.isArray(c.machineModels) ? c.machineModels : [])
+    .filter((m): m is string => typeof m === "string")
+    .slice(0, 20)
+    .map((m) => m.slice(0, 200));
+
+  const contacts: InstallContacts = {
+    accountName: str(c.accountName, 200),
+    accountNumber: str(c.accountNumber, 60),
+    streetAddress: str(c.streetAddress, 300),
+    city: str(c.city, 120),
+    stateCode: str(c.stateCode, 10),
+    postalCode: str(c.postalCode, 20),
+    customerName: str(c.customerName, 200),
+    customerPhone: str(c.customerPhone, 60),
+    customerEmail: email(c.customerEmail),
+    salesRepName: str(c.salesRepName, 200),
+    salesRepPhone: str(c.salesRepPhone, 60),
+    salesRepEmail: email(c.salesRepEmail),
+    ssdcRepName: str(c.ssdcRepName, 200),
+    specialistName: str(c.specialistName, 200),
+    specialistEmail: email(c.specialistEmail),
+    operatingCompany: str(c.operatingCompany, 200),
+    machineModels,
+  };
+
+  const hasAnything = Object.values(contacts).some((v) =>
+    Array.isArray(v) ? v.length > 0 : Boolean(v),
+  );
+  return hasAnything ? contacts : null;
+}
+
 function readDetailsField(raw: FormDataEntryValue | null): SheetDetails {
-  const empty: SheetDetails = { items: [], notes: [], customerEmail: null };
+  const empty: SheetDetails = { items: [], notes: [], customerEmail: null, contacts: null };
   if (typeof raw !== "string" || !raw.trim()) return empty;
 
   let parsed: unknown;
@@ -75,7 +139,12 @@ function readDetailsField(raw: FormDataEntryValue | null): SheetDetails {
     .filter(Boolean);
 
   const email = str((source as { customerEmail?: unknown }).customerEmail, 200);
-  return { items, notes, customerEmail: EMAIL_SHAPE.test(email) ? email : null };
+  return {
+    items,
+    notes,
+    customerEmail: EMAIL_SHAPE.test(email) ? email : null,
+    contacts: readContactsField(source as Record<string, unknown>),
+  };
 }
 
 export interface RequestState {
@@ -101,7 +170,7 @@ export async function createRequest(
   const sheetText = formData.get("sheet_text");
 
   let rawText = typeof pasted === "string" ? pasted.trim() : "";
-  let details: SheetDetails = { items: [], notes: [], customerEmail: null };
+  let details: SheetDetails = { items: [], notes: [], customerEmail: null, contacts: null };
 
   if (typeof sheetText === "string" && sheetText.trim()) {
     if (sheetText.length > MAX_SHEET_CHARS) {
@@ -160,6 +229,37 @@ export async function createRequest(
 
   if (error || !request) {
     return { error: error?.message ?? "Could not save the request." };
+  }
+
+  // Drafted, not sent -- an administrator releases it from the review screen.
+  // Only a sheet with contacts produces one: there is no thread to reply into
+  // on a hand-uploaded request, so the acknowledgment does not apply here.
+  if (details.contacts) {
+    try {
+      let rsmEmail: string | null = null;
+      if (details.contacts.ssdcRepName) {
+        const { data: rsm } = await supabase
+          .from("rsm_contacts")
+          .select("email")
+          .ilike("name", details.contacts.ssdcRepName)
+          .maybeSingle<{ email: string | null }>();
+        rsmEmail = rsm?.email ?? null;
+      }
+
+      const rows = composeDraftEmails({
+        summary: summaryFromParsedRequest(summarised, details.contacts),
+        orgName: ORG_NAME,
+        readinessRecipients: readinessRecipients(details.contacts, rsmEmail),
+      });
+
+      if (rows.length > 0) {
+        await supabase
+          .from("outbound_emails")
+          .insert(rows.map((row) => ({ ...row, request_id: request.id })));
+      }
+    } catch (cause) {
+      console.error("createRequest: draft compose failed", cause);
+    }
   }
 
   revalidatePath("/admin/requests");
@@ -309,4 +409,45 @@ export async function reparseRequest(formData: FormData): Promise<void> {
     .eq("id", requestId);
 
   revalidatePath(`/admin/requests/${requestId}`);
+}
+
+/**
+ * Release a drafted email to send.
+ *
+ * This does not send it. It moves the row from 'draft' to 'queued', which is
+ * as far as this application goes -- n8n sends through the real Outlook
+ * mailbox, and picks up whatever is queued on its own schedule. The `eq`
+ * status guard is what makes clicking twice harmless.
+ */
+export async function releaseOutboundEmail(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const emailId = formData.get("email_id");
+  const requestId = formData.get("request_id");
+  if (typeof emailId !== "string") return;
+
+  const supabase = await createClient();
+  await supabase
+    .from("outbound_emails")
+    .update({ status: "queued" })
+    .eq("id", emailId)
+    .eq("status", "draft");
+
+  if (typeof requestId === "string") revalidatePath(`/admin/requests/${requestId}`);
+}
+
+/** Call off a draft or a released email before it sends. */
+export async function cancelOutboundEmail(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const emailId = formData.get("email_id");
+  const requestId = formData.get("request_id");
+  if (typeof emailId !== "string") return;
+
+  const supabase = await createClient();
+  await supabase
+    .from("outbound_emails")
+    .update({ status: "cancelled" })
+    .eq("id", emailId)
+    .in("status", ["draft", "queued"]);
+
+  if (typeof requestId === "string") revalidatePath(`/admin/requests/${requestId}`);
 }

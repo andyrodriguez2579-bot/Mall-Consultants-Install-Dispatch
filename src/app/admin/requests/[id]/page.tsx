@@ -4,8 +4,9 @@ import { Card, CardHeader, InfoBanner } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
-import type { AppSetting, InstallRequest, PriceListItem, Skill } from "@/lib/types";
+import type { AppSetting, InstallRequest, OutboundEmail, PriceListItem, Skill } from "@/lib/types";
 import type { ParsedRequest } from "@/lib/intake/parse";
+import { OutboundEmailsPanel } from "./outbound-emails";
 import { ReviewForm } from "./review-form";
 
 export const dynamic = "force-dynamic";
@@ -32,20 +33,26 @@ export default async function ReviewRequestPage({
     redirect(`/admin/jobs/${request.job_id}`);
   }
 
-  const [{ data: priceList }, { data: skills }, { data: settings }] = await Promise.all([
-    supabase
-      .from("price_list_items")
-      .select("*")
-      .eq("is_active", true)
-      .order("sort_order")
-      .order("name"),
-    supabase
-      .from("skills")
-      .select("id, slug, name, description, is_active")
-      .eq("is_active", true)
-      .order("name"),
-    supabase.from("app_settings").select("*"),
-  ]);
+  const [{ data: priceList }, { data: skills }, { data: settings }, { data: outboundEmails }] =
+    await Promise.all([
+      supabase
+        .from("price_list_items")
+        .select("*")
+        .eq("is_active", true)
+        .order("sort_order")
+        .order("name"),
+      supabase
+        .from("skills")
+        .select("id, slug, name, description, is_active")
+        .eq("is_active", true)
+        .order("name"),
+      supabase.from("app_settings").select("*"),
+      supabase
+        .from("outbound_emails")
+        .select("*")
+        .eq("request_id", id)
+        .order("created_at"),
+    ]);
 
   const byKey = Object.fromEntries(((settings ?? []) as AppSetting[]).map((s) => [s.key, s]));
 
@@ -88,16 +95,19 @@ export default async function ReviewRequestPage({
           </pre>
         </Card>
 
-        <ReviewForm
-          details={parsed?.details ?? { items: [], notes: [] }}
-          requestId={request.id}
-          parsed={parsed}
-          priceList={(priceList ?? []) as PriceListItem[]}
-          skills={(skills ?? []) as Skill[]}
-          contractorBps={Number(byKey.contractor_percentage_bps?.value ?? 4500)}
-          mileageRate={Number(byKey.mileage_rate?.value ?? 0.725)}
-          commuterMiles={Number(byKey.commuter_deduction_miles?.value ?? 30)}
-        />
+        <div className="space-y-5">
+          <ReviewForm
+            details={parsed?.details ?? { items: [], notes: [] }}
+            requestId={request.id}
+            parsed={parsed}
+            priceList={(priceList ?? []) as PriceListItem[]}
+            skills={(skills ?? []) as Skill[]}
+            contractorBps={Number(byKey.contractor_percentage_bps?.value ?? 4500)}
+            mileageRate={Number(byKey.mileage_rate?.value ?? 0.725)}
+            commuterMiles={Number(byKey.commuter_deduction_miles?.value ?? 30)}
+          />
+          <OutboundEmailsPanel requestId={request.id} emails={(outboundEmails ?? []) as OutboundEmail[]} />
+        </div>
       </div>
     </div>
   );

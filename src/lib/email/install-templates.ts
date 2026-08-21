@@ -174,3 +174,74 @@ export function siteReadinessEmail(
     body: lines.join("\n"),
   };
 }
+
+export type DraftEmailKind = "acknowledgment" | "site_readiness";
+
+export interface DraftEmailRow {
+  kind: DraftEmailKind;
+  to_emails: string[];
+  cc_emails: string[];
+  subject: string;
+  body: string;
+  reply_to_message_id: string | null;
+  conversation_id: string | null;
+}
+
+/** Where the acknowledgment replies to -- the sender of the original email. */
+export interface ReplyThread {
+  toEmail: string;
+  messageId: string | null;
+  conversationId: string | null;
+}
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * What to draft for one request, from what is actually known about it.
+ *
+ * An acknowledgment needs a thread to reply into -- only a request that
+ * arrived by email has one. A site-readiness note needs at least one real
+ * recipient -- only a request with contacts read from an install sheet has
+ * those. A request can produce either, both, or neither; nothing here assumes
+ * both are always available, and a malformed address is dropped rather than
+ * sent.
+ */
+export function composeDraftEmails(params: {
+  summary: RequestSummary;
+  orgName: string;
+  replyThread?: ReplyThread | null;
+  readinessRecipients?: Array<string | null> | null;
+}): DraftEmailRow[] {
+  const rows: DraftEmailRow[] = [];
+
+  if (params.replyThread && EMAIL_SHAPE.test(params.replyThread.toEmail)) {
+    const { subject, body } = acknowledgmentEmail(params.summary, params.orgName);
+    rows.push({
+      kind: "acknowledgment",
+      to_emails: [params.replyThread.toEmail],
+      cc_emails: [],
+      subject,
+      body,
+      reply_to_message_id: params.replyThread.messageId,
+      conversation_id: params.replyThread.conversationId,
+    });
+  }
+
+  const readiness = (params.readinessRecipients ?? []).filter(
+    (email): email is string => typeof email === "string" && EMAIL_SHAPE.test(email),
+  );
+  if (readiness.length > 0) {
+    const { subject, body } = siteReadinessEmail(params.summary, params.orgName);
+    rows.push({
+      kind: "site_readiness",
+      to_emails: readiness,
+      cc_emails: [],
+      subject,
+      body,
+      reply_to_message_id: null,
+      conversation_id: null,
+    });
+  }
+
+  return rows;
+}

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { installRequestPayload } from "../src/lib/automation/install-request.ts";
-import { payloadFromStored, toParsedRequest } from "../src/lib/automation/to-parsed.ts";
+import {
+  payloadFromStored,
+  summaryFromParsedRequest,
+  summaryFromPayload,
+  toParsedRequest,
+} from "../src/lib/automation/to-parsed.ts";
 
 /**
  * The review screen reads a ParsedRequest, and reads it by exact name.
@@ -176,4 +181,81 @@ test("a PO stands in when there is no work order", () => {
   const parsed = toParsedRequest(withPo);
   assert.equal(parsed.customer_reference?.value, "PO-4417");
   assert.equal(parsed.customer_reference?.evidence, "PO number");
+});
+
+test("the acknowledgment email is built from plain values, not the review screen's shape", () => {
+  const summary = summaryFromPayload(luigis);
+
+  assert.equal(summary.customerName, "Luigi's Pizza - 509103264");
+  assert.equal(summary.addressLine, "16 Skyline Lake Drive");
+  assert.equal(summary.city, "Ringwood");
+  assert.equal(summary.stateCode, "NJ");
+  assert.equal(summary.postalCode, "07456");
+  assert.equal(summary.workOrderNumber, "70069233");
+  assert.equal(summary.accountNumber, "509103264");
+  assert.match(summary.scope, /^A Program, STD SR Solo \(gang\)/);
+  // Same housekeeping strip as the review screen's version -- one email
+  // should not quote back an instruction meant for mHelp's own back office.
+  assert.ok(!/Upload photos/i.test(summary.scope));
+});
+
+test("a sparse payload still produces a summary an email can be built from", () => {
+  const sparse = installRequestPayload.parse({
+    source_email_message_id: "x",
+    raw_text: "not much here",
+  });
+  const summary = summaryFromPayload(sparse);
+
+  assert.equal(summary.customerName, null);
+  assert.equal(summary.scope, null);
+});
+
+test("the site-readiness email prefers the sheet's own contacts over the text parser's guess", () => {
+  const parsed = {
+    customer_name: { value: "wrong name from the body", evidence: "x", basis: "pattern" },
+    site_name: null,
+    address_line1: null,
+    city: null,
+    state_code: null,
+    postal_code: null,
+    site_contact_name: null,
+    site_contact_phone: null,
+    customer_reference: { value: "70069233", evidence: "x", basis: "label" },
+    scheduled_start: null,
+    deadline_at: null,
+    title: null,
+    scope: "Install a dish machine.",
+    suggestedItems: [],
+    missing: [],
+  };
+  const contacts = {
+    accountName: "Skinny Louie Park Slope",
+    accountNumber: "56931964",
+    streetAddress: "218 Flatbush Ave",
+    city: "Brooklyn",
+    stateCode: "NY",
+    postalCode: "11217",
+    customerName: "Fred Brea",
+    customerPhone: null,
+    customerEmail: "fredrick@skinnylouie.com",
+    salesRepName: "Russell Arnold",
+    salesRepPhone: null,
+    salesRepEmail: "russell.arnold@pfgc.com",
+    ssdcRepName: "Chris Medeiros",
+    specialistName: null,
+    specialistEmail: null,
+    operatingCompany: "PFS- NY Metro",
+    machineModels: [],
+  };
+
+  const summary = summaryFromParsedRequest(parsed, contacts);
+
+  assert.equal(summary.customerName, "Fred Brea");
+  assert.equal(summary.siteContactName, "Fred Brea");
+  assert.equal(summary.addressLine, "218 Flatbush Ave");
+  assert.equal(summary.city, "Brooklyn");
+  assert.equal(summary.accountNumber, "56931964");
+  // The reference still comes from the request, not the contacts block, which
+  // has no notion of a work order.
+  assert.equal(summary.workOrderNumber, "70069233");
 });

@@ -1,3 +1,4 @@
+import { ORG_NAME } from "@/lib/branding";
 import { authorizeAutomation } from "@/lib/automation/auth";
 import {
   installRequestPayload,
@@ -5,7 +6,8 @@ import {
   parseTimestamp,
   reviewVerdict,
 } from "@/lib/automation/install-request";
-import { toParsedRequest } from "@/lib/automation/to-parsed";
+import { summaryFromPayload, toParsedRequest } from "@/lib/automation/to-parsed";
+import { composeDraftEmails } from "@/lib/email/install-templates";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -170,6 +172,36 @@ export async function POST(request: Request) {
       missing_fields: payload.missing_fields ?? [],
     },
   });
+
+  // Drafted, not sent -- an administrator releases it from the review screen.
+  // Best-effort: a request is recorded either way, and a missing draft is
+  // something a person notices and can compose by hand, while a request lost
+  // over an email failure is not recoverable at all.
+  try {
+    const rows = composeDraftEmails({
+      summary: summaryFromPayload(payload),
+      orgName: ORG_NAME,
+      replyThread: payload.source_email_sender
+        ? {
+            toEmail: payload.source_email_sender,
+            messageId: payload.source_email_message_id,
+            conversationId: payload.source_email_conversation_id ?? null,
+          }
+        : null,
+    });
+
+    if (rows.length > 0) {
+      const { error: draftError } = await admin
+        .from("outbound_emails")
+        .insert(rows.map((row) => ({ ...row, request_id: created.id })));
+
+      if (draftError && !/duplicate key|unique/i.test(draftError.message)) {
+        console.error("automation/install-request: draft email failed", draftError.message);
+      }
+    }
+  } catch (cause) {
+    console.error("automation/install-request: draft compose failed", cause);
+  }
 
   return Response.json(
     {

@@ -314,13 +314,56 @@ export interface InstallRequest {
   id: string;
   status: RequestStatus;
   raw_text: string;
-  source: "paste" | "email" | "phone" | "manual";
+  source: "paste" | "email" | "phone" | "manual" | "automation";
   received_at: string;
   parsed: Record<string, unknown>;
   job_id: string | null;
   converted_at: string | null;
   discard_reason: string | null;
   created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  source_message_id: string | null;
+  source_conversation_id: string | null;
+  source_sender: string | null;
+  source_subject: string | null;
+  source_received_at: string | null;
+  needs_review: boolean;
+  review_reason: string | null;
+}
+
+export type OutboundEmailKind =
+  | "acknowledgment"
+  | "site_readiness"
+  | "schedule_confirmation"
+  | "completion";
+
+export type OutboundEmailStatus =
+  | "draft"
+  | "queued"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "cancelled";
+
+export interface OutboundEmail {
+  id: string;
+  kind: OutboundEmailKind;
+  request_id: string | null;
+  job_id: string | null;
+  to_emails: string[];
+  cc_emails: string[];
+  subject: string;
+  body: string;
+  reply_to_message_id: string | null;
+  conversation_id: string | null;
+  status: OutboundEmailStatus;
+  scheduled_for: string;
+  claimed_at: string | null;
+  sent_at: string | null;
+  provider_message_id: string | null;
+  error: string | null;
+  attempts: number;
   created_at: string;
   updated_at: string;
 }

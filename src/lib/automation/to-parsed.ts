@@ -1,3 +1,5 @@
+import type { RequestSummary } from "@/lib/email/install-templates";
+import type { InstallContacts } from "@/lib/intake/workbook";
 import type { ParsedRequest } from "@/lib/intake/parse";
 import type { InstallRequestPayload } from "./install-request";
 
@@ -160,4 +162,53 @@ export function toParsedRequest(payload: InstallRequestPayload): ParsedRequest {
   );
 
   return result;
+}
+
+/**
+ * What the acknowledgment email reads back, from the automation's own payload.
+ *
+ * Built straight from the payload rather than from `toParsedRequest`'s output,
+ * because the email is composed at intake -- before an administrator has
+ * corrected anything -- and `ParsedRequest`'s wrapped `{value, evidence}`
+ * shape exists for the review screen, not for this.
+ */
+export function summaryFromPayload(payload: InstallRequestPayload): RequestSummary {
+  return {
+    customerName: payload.customer_name ?? null,
+    siteName: payload.site_name ?? null,
+    addressLine: payload.installation_address ?? null,
+    city: payload.city ?? null,
+    stateCode: payload.state ? payload.state.toUpperCase() : null,
+    postalCode: payload.zip ?? null,
+    workOrderNumber: payload.work_order_number ?? null,
+    accountNumber: payload.account_number ?? null,
+    scope: buildScope(payload) || null,
+    siteContactName: payload.site_contact_name ?? null,
+  };
+}
+
+/**
+ * What the site-readiness email reads back, from an install sheet's contacts.
+ *
+ * The contacts block is the ground truth for a sheet-sourced request -- it is
+ * where the RSM, the sales contact and the customer's own address come from --
+ * so it is preferred over the generic text parser's guess at the same fields
+ * whenever both exist.
+ */
+export function summaryFromParsedRequest(
+  parsed: ParsedRequest,
+  contacts?: InstallContacts | null,
+): RequestSummary {
+  return {
+    customerName: contacts?.customerName ?? parsed.customer_name?.value ?? null,
+    siteName: contacts?.accountName ?? parsed.site_name?.value ?? null,
+    addressLine: contacts?.streetAddress ?? parsed.address_line1?.value ?? null,
+    city: contacts?.city ?? parsed.city?.value ?? null,
+    stateCode: contacts?.stateCode ?? parsed.state_code?.value ?? null,
+    postalCode: contacts?.postalCode ?? parsed.postal_code?.value ?? null,
+    workOrderNumber: parsed.customer_reference?.value ?? null,
+    accountNumber: contacts?.accountNumber ?? null,
+    scope: parsed.scope || null,
+    siteContactName: contacts?.customerName ?? parsed.site_contact_name?.value ?? null,
+  };
 }
