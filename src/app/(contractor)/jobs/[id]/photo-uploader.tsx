@@ -8,6 +8,51 @@ import { recordPhoto } from "../actions";
 const MAX_BYTES = 15 * 1024 * 1024;
 const ACCEPTED = ["image/jpeg", "image/png", "image/webp", "image/heic"];
 
+/** The longest edge a report photo needs -- more than this is wasted upload time. */
+const MAX_DIMENSION = 1600;
+const JPEG_QUALITY = 0.75;
+
+/**
+ * Shrink a photo in the browser before it ever reaches the network.
+ *
+ * A phone camera photo runs 8-12 MB at 4000+ px wide, and nothing downstream
+ * -- the report, the ticket PDF, a thumbnail on a job card -- needs more than
+ * about 1600 px. Resizing and re-encoding here, before the upload starts, is
+ * what turns a slow multi-megabyte transfer on a mall's cell signal into a
+ * few hundred kilobytes.
+ *
+ * HEIC is left alone: canvas cannot decode it in most browsers, and failing
+ * silently back to the original file is better than blocking the upload
+ * outright. Anything else that fails to decode falls back the same way.
+ */
+async function compressImage(file: File): Promise<File> {
+  if (file.type === "image/heic" || !file.type.startsWith("image/")) return file;
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY),
+    );
+    if (!blob || blob.size >= file.size) return file;
+
+    const name = file.name.replace(/\.\w+$/, "") + ".jpg";
+    return new File([blob], name, { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
 /**
  * Uploads photos from the device straight to Supabase Storage under the
  * contractor's own session, then records the metadata through a server action.
@@ -39,15 +84,18 @@ export function PhotoUploader({
 
     try {
       let done = 0;
-      for (const file of Array.from(files)) {
-        if (!ACCEPTED.includes(file.type)) {
-          setError(`${file.name} is not a supported image type.`);
+      for (const original of Array.from(files)) {
+        if (!ACCEPTED.includes(original.type)) {
+          setError(`${original.name} is not a supported image type.`);
           continue;
         }
-        if (file.size > MAX_BYTES) {
-          setError(`${file.name} is larger than 15 MB.`);
+        if (original.size > MAX_BYTES) {
+          setError(`${original.name} is larger than 15 MB.`);
           continue;
         }
+
+        setProgress(`Preparing ${done + 1} of ${files.length}…`);
+        const file = await compressImage(original);
 
         setProgress(`Uploading ${done + 1} of ${files.length}…`);
 
@@ -94,9 +142,9 @@ export function PhotoUploader({
         ref={inputRef}
         type="file"
         accept="image/*"
-        // `capture` opens the camera directly on a phone rather than the
-        // photo picker, which is what a contractor on site actually wants.
-        capture="environment"
+        // No `capture` attribute: that would force the camera open directly
+        // and skip the OS picker, leaving no way to choose an existing photo.
+        // Without it, a phone or tablet offers both -- take one or pick one.
         multiple
         hidden
         onChange={(e) => handleFiles(e.target.files)}
