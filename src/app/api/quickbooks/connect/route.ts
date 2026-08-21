@@ -21,5 +21,5 @@ export async function GET() {
     path: "/api/quickbooks",
   });
 
-  return Response.redirect(quickbooksAuthorizeUrl(state));
+  return Response.redirect(await quickbooksAuthorizeUrl(state));
 }

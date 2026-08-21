@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { refreshQuickbooksTokens, revokeQuickbooksToken, type QuickbooksTokens } from "./client";
+import {
+  QuickbooksInvalidGrantError,
+  refreshQuickbooksTokens,
+  revokeQuickbooksToken,
+  type QuickbooksTokens,
+} from "./client";
 
 /**
  * The one stored connection to Mall Consultants' QuickBooks company.
@@ -73,6 +78,13 @@ export async function getQuickbooksConnection(
  * Refreshes and persists the new tokens when the access token is stale --
  * QuickBooks access tokens last an hour, and nothing calling this should have
  * to know that or handle a 401 to find out.
+ *
+ * Returns null, and clears the stored row, whenever the connection cannot be
+ * made to work again on its own -- an expired refresh token or an
+ * `invalid_grant` from Intuit. Leaving a dead row in place would have
+ * `/admin/quickbooks` keep reporting "Connected" indefinitely with a token
+ * nothing can use; deleting it is what makes the status page honest and
+ * prompts a person to reconnect.
  */
 export async function getValidQuickbooksConnection(
   admin: SupabaseClient,
@@ -85,15 +97,21 @@ export async function getValidQuickbooksConnection(
   }
 
   if (new Date(connection.refreshTokenExpiresAt).getTime() <= Date.now()) {
-    // The refresh token itself has expired -- reconnecting is the only way
-    // forward, and that is a person clicking "Connect" again, not something
-    // this function can do on its own.
+    await admin.from("quickbooks_connection").delete().eq("id", true);
     return null;
   }
 
-  const refreshed = await refreshQuickbooksTokens(connection.refreshToken);
-  await saveQuickbooksConnection(admin, connection.realmId, refreshed);
-  return { realmId: connection.realmId, ...refreshed };
+  try {
+    const refreshed = await refreshQuickbooksTokens(connection.refreshToken);
+    await saveQuickbooksConnection(admin, connection.realmId, refreshed);
+    return { realmId: connection.realmId, ...refreshed };
+  } catch (cause) {
+    if (cause instanceof QuickbooksInvalidGrantError) {
+      await admin.from("quickbooks_connection").delete().eq("id", true);
+      return null;
+    }
+    throw cause;
+  }
 }
 
 export async function clearQuickbooksConnection(admin: SupabaseClient): Promise<void> {
