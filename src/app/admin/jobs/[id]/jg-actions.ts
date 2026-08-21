@@ -7,6 +7,8 @@ import { sendEmail } from "@/lib/email";
 import { JG_RATE_CARD } from "@/lib/jg/rate-card";
 import { buildJgWorkbookBuffer } from "@/lib/jg/workbook";
 import { parseMoneyToCents } from "@/lib/format";
+import { getValidQuickbooksConnection } from "@/lib/quickbooks/connection";
+import { createQuickbooksInvoice, recordQuickbooksPayment } from "@/lib/quickbooks/invoices";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { FormState } from "../actions";
@@ -269,8 +271,74 @@ export async function sendJgSubmission(_prev: FormState, formData: FormData): Pr
     },
   });
 
+  // Best-effort and never sent to JG -- this is Mall Consultants' own copy
+  // of what they are owed for the job, for their own books. Not connecting
+  // QuickBooks, or QuickBooks being briefly unreachable, must not stop the
+  // actual submission to JG above, which already succeeded.
+  try {
+    const connection = await getValidQuickbooksConnection(admin);
+    if (connection) {
+      const { id: quickbooksInvoiceId } = await createQuickbooksInvoice(connection, {
+        customerName: "JG Installations",
+        billEmail: null,
+        memo: `Job ${job.job_number}${submission.account_name ? ` -- ${submission.account_name}` : ""}`,
+        description: `Installation -- Job ${job.job_number}`,
+        totalCents: submission.lines_subtotal_cents,
+      });
+      await admin
+        .from("jg_submissions")
+        .update({ quickbooks_invoice_id: quickbooksInvoiceId, quickbooks_synced_at: new Date().toISOString() })
+        .eq("id", submissionId);
+    }
+  } catch (cause) {
+    console.error("sendJgSubmission: QuickBooks sync failed", cause);
+  }
+
   revalidatePath(`/admin/jobs/${jobId}`);
   return { success: `Sent to ${INVOICE_RECIPIENT_EMAIL}.` };
+}
+
+/**
+ * Record that JG paid, both here and (if connected) in QuickBooks -- where
+ * recording a payment against the invoice is what actually clears its
+ * balance, not a status flag.
+ */
+export async function markJgSubmissionPaid(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const submissionId = formData.get("submission_id");
+  const jobId = formData.get("job_id");
+  if (typeof submissionId !== "string" || typeof jobId !== "string") return;
+
+  const admin = createAdminClient();
+  const { data: submission } = await admin
+    .from("jg_submissions")
+    .select("*")
+    .eq("id", submissionId)
+    .maybeSingle<JgSubmission>();
+
+  if (!submission || submission.status !== "sent" || submission.paid_at) return;
+
+  await admin
+    .from("jg_submissions")
+    .update({ paid_at: new Date().toISOString(), paid_amount_cents: submission.lines_subtotal_cents })
+    .eq("id", submissionId);
+
+  if (submission.quickbooks_invoice_id) {
+    try {
+      const connection = await getValidQuickbooksConnection(admin);
+      if (connection) {
+        await recordQuickbooksPayment(connection, {
+          quickbooksInvoiceId: submission.quickbooks_invoice_id,
+          customerName: "JG Installations",
+          amountCents: submission.lines_subtotal_cents,
+        });
+      }
+    } catch (cause) {
+      console.error("markJgSubmissionPaid: QuickBooks sync failed", cause);
+    }
+  }
+
+  revalidatePath(`/admin/jobs/${jobId}`);
 }
 
 /** Call off a submission -- from either state -- so a corrected one can be issued. */

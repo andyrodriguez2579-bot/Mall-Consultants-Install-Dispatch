@@ -51,10 +51,17 @@ const resendSchema = z.object({
   EMAIL_FROM: z.string().min(3, "EMAIL_FROM is required to send email"),
 });
 
+const quickbooksSchema = z.object({
+  QBO_CLIENT_ID: z.string().min(10, "QBO_CLIENT_ID is required to connect QuickBooks"),
+  QBO_CLIENT_SECRET: z.string().min(10, "QBO_CLIENT_SECRET is required to connect QuickBooks"),
+  QBO_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
+});
+
 export const supabaseEnv = () => parse(supabaseSchema, "Supabase");
 export const serviceRoleEnv = () => parse(serviceRoleSchema, "Supabase service role");
 export const twilioEnv = () => parse(twilioSchema, "Twilio");
 export const resendEnv = () => parse(resendSchema, "Resend");
+export const quickbooksEnv = () => parse(quickbooksSchema, "QuickBooks");
 
 /**
  * Shared secret for the automation endpoints n8n calls.

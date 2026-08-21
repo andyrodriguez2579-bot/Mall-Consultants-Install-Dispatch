@@ -2,7 +2,7 @@ import { Card, CardHeader, Field, buttonClass, inputClass } from "@/components/u
 import { INVOICE_RECIPIENT_EMAIL } from "@/lib/branding";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import type { Job, JgSubmission, JgSubmissionLine } from "@/lib/types";
-import { createJgSubmissionDraft, voidJgSubmission } from "./jg-actions";
+import { createJgSubmissionDraft, markJgSubmissionPaid, voidJgSubmission } from "./jg-actions";
 import { JgEditor } from "./jg-editor";
 
 /**
@@ -75,18 +75,44 @@ export function JgPanel({
               ))}
             </ul>
 
-            <form action={voidJgSubmission} className="flex flex-wrap items-end gap-2">
-              <input type="hidden" name="submission_id" value={liveSubmission.id} />
-              <input type="hidden" name="job_id" value={job.id} />
-              <div className="min-w-48 flex-1">
-                <Field label="Reason (optional)">
-                  <input name="reason" placeholder="Wrong quantity, reissuing" className={inputClass} />
-                </Field>
-              </div>
-              <button type="submit" className={buttonClass("secondary")}>
-                Void &amp; reissue
-              </button>
-            </form>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              {liveSubmission.quickbooks_invoice_id ? (
+                <p>
+                  In QuickBooks as invoice {liveSubmission.quickbooks_invoice_id}
+                  {liveSubmission.paid_at
+                    ? ` — paid ${formatDateTime(liveSubmission.paid_at)}`
+                    : " — not yet marked paid"}
+                  . For Mall Consultants&apos; records only; JG never sees this.
+                </p>
+              ) : (
+                <p>Not in QuickBooks — connect it at Admin → QuickBooks, or it wasn&apos;t reachable when this was sent.</p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2">
+              {!liveSubmission.paid_at ? (
+                <form action={markJgSubmissionPaid}>
+                  <input type="hidden" name="submission_id" value={liveSubmission.id} />
+                  <input type="hidden" name="job_id" value={job.id} />
+                  <button type="submit" className={buttonClass("primary")}>
+                    Mark paid
+                  </button>
+                </form>
+              ) : null}
+
+              <form action={voidJgSubmission} className="flex flex-wrap items-end gap-2">
+                <input type="hidden" name="submission_id" value={liveSubmission.id} />
+                <input type="hidden" name="job_id" value={job.id} />
+                <div className="min-w-48 flex-1">
+                  <Field label="Reason (optional)">
+                    <input name="reason" placeholder="Wrong quantity, reissuing" className={inputClass} />
+                  </Field>
+                </div>
+                <button type="submit" className={buttonClass("secondary")}>
+                  Void &amp; reissue
+                </button>
+              </form>
+            </div>
           </div>
         )}
 

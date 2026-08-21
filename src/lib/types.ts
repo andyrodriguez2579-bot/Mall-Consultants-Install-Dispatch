@@ -381,6 +381,11 @@ export interface JgSubmission {
   send_error: string | null;
   voided_at: string | null;
   void_reason: string | null;
+  /** Mall Consultants' own QuickBooks copy -- never sent to JG. */
+  quickbooks_invoice_id: string | null;
+  quickbooks_synced_at: string | null;
+  paid_at: string | null;
+  paid_amount_cents: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
