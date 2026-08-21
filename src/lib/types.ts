@@ -348,6 +348,57 @@ export interface InvoiceLineItem {
   created_at: string;
 }
 
+export type JgSubmissionStatus = "draft" | "sent" | "void";
+
+/**
+ * A job's report to JG Installations, who pays Mall Consultants for the job --
+ * a different party, and a different rate card (src/lib/jg/rate-card.ts), than
+ * the customer invoice above.
+ */
+export interface JgSubmission {
+  id: string;
+  job_id: string;
+  status: JgSubmissionStatus;
+  account_name: string | null;
+  account_number: string | null;
+  rsm_name: string | null;
+  opco: string | null;
+  start_mileage: number;
+  end_mileage: number;
+  commuter_miles: number;
+  mileage_rate: number;
+  mileage_cents: number;
+  home_depot_cents: number;
+  lowes_cents: number;
+  harbor_freight_cents: number;
+  local_hardware_cents: number;
+  hotel_cents: number;
+  tolls_parking_cents: number;
+  lines_subtotal_cents: number;
+  sent_at: string | null;
+  sent_to_email: string | null;
+  email_message_id: string | null;
+  send_error: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JgSubmissionLine {
+  id: string;
+  submission_id: string;
+  rate_card_item_id: string | null;
+  category: string;
+  description: string;
+  unit_price_cents: number;
+  quantity: number;
+  line_total_cents: number;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface InstallRequest {
   id: string;
   status: RequestStatus;

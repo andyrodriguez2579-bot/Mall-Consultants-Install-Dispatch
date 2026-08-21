@@ -3,10 +3,10 @@ import { emailDriver } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { devDriver } from "./dev";
 import { resendDriver } from "./resend";
-import type { EmailDriver } from "./driver";
+import type { EmailAttachment, EmailDriver } from "./driver";
 
 export * as templates from "./templates";
-export type { EmailDriver, EmailSendResult } from "./driver";
+export type { EmailAttachment, EmailDriver, EmailSendResult } from "./driver";
 
 function resolveDriver(): EmailDriver {
   return emailDriver() === "resend" ? resendDriver : devDriver;
@@ -19,6 +19,7 @@ export interface SendEmailInput {
   purpose: string;
   profileId?: string | null;
   jobId?: string | null;
+  attachments?: EmailAttachment[];
   client?: SupabaseClient;
 }
 
@@ -46,6 +47,7 @@ export async function sendEmail({
   purpose,
   profileId = null,
   jobId = null,
+  attachments,
   client,
 }: SendEmailInput): Promise<SendEmailOutcome> {
   const supabase = client ?? createAdminClient();
@@ -78,7 +80,7 @@ export async function sendEmail({
     };
   }
 
-  const result = await driver.send({ to, subject, body });
+  const result = await driver.send({ to, subject, body, attachments });
 
   await supabase
     .from("email_messages")

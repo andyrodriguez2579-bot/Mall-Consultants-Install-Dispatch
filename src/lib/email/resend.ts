@@ -10,12 +10,14 @@ import type { EmailDriver, EmailSendResult } from "./driver";
  *
  * Plain text only. These are sign-in links and short operational notices, and
  * a text/plain message is the one shape no client mangles, no image proxy
- * rewrites, and no spam filter marks down for a mismatched HTML part.
+ * rewrites, and no spam filter marks down for a mismatched HTML part. An
+ * attachment -- the JG Installations workbook -- is the one exception: it
+ * travels alongside the text body, not instead of it.
  */
 export const resendDriver: EmailDriver = {
   name: "resend",
 
-  async send({ to, subject, body }): Promise<EmailSendResult> {
+  async send({ to, subject, body, attachments }): Promise<EmailSendResult> {
     const { RESEND_API_KEY, EMAIL_FROM } = resendEnv();
 
     try {
@@ -25,7 +27,20 @@ export const resendDriver: EmailDriver = {
           authorization: `Bearer ${RESEND_API_KEY}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ from: EMAIL_FROM, to: [to], subject, text: body }),
+        body: JSON.stringify({
+          from: EMAIL_FROM,
+          to: [to],
+          subject,
+          text: body,
+          ...(attachments && attachments.length > 0
+            ? {
+                attachments: attachments.map((a) => ({
+                  filename: a.filename,
+                  content: a.content.toString("base64"),
+                })),
+              }
+            : {}),
+        }),
       });
 
       const payload = (await response.json().catch(() => null)) as

@@ -31,11 +31,14 @@ import type {
   JobAttachment,
   JobFinancials,
   JobOffer,
+  JgSubmission,
+  JgSubmissionLine,
   Profile,
   Skill,
 } from "@/lib/types";
 import { DispatchPanel } from "./dispatch-panel";
 import { InvoicePanel } from "./invoice-panel";
+import { JgPanel } from "./jg-panel";
 import { JobAdminPanels } from "./job-admin-panels";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +71,7 @@ export default async function AdminJobDetail({
     { data: auditRows },
     { data: financials },
     { data: invoiceRows },
+    { data: jgSubmissionRows },
   ] = await Promise.all([
     supabase
       // No embed: see profilesByIds in src/lib/people.ts for why reaching a
@@ -98,6 +102,11 @@ export default async function AdminJobDetail({
       .select("*")
       .eq("job_id", id)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("jg_submissions")
+      .select("*")
+      .eq("job_id", id)
+      .order("created_at", { ascending: false }),
   ]);
 
   const invoices = (invoiceRows ?? []) as Invoice[];
@@ -105,14 +114,28 @@ export default async function AdminJobDetail({
   const liveInvoice = invoices.find((inv) => inv.status !== "void") ?? null;
   const voidedInvoices = invoices.filter((inv) => inv.status === "void");
 
-  const { data: invoiceLineRows } = liveInvoice
-    ? await supabase
-        .from("invoice_line_items")
-        .select("*")
-        .eq("invoice_id", liveInvoice.id)
-        .order("sort_order")
-    : { data: [] as InvoiceLineItem[] };
+  const jgSubmissions = (jgSubmissionRows ?? []) as JgSubmission[];
+  const liveJgSubmission = jgSubmissions.find((s) => s.status !== "void") ?? null;
+  const voidedJgSubmissions = jgSubmissions.filter((s) => s.status === "void");
+
+  const [{ data: invoiceLineRows }, { data: jgLineRows }] = await Promise.all([
+    liveInvoice
+      ? supabase
+          .from("invoice_line_items")
+          .select("*")
+          .eq("invoice_id", liveInvoice.id)
+          .order("sort_order")
+      : Promise.resolve({ data: [] as InvoiceLineItem[] }),
+    liveJgSubmission
+      ? supabase
+          .from("jg_submission_lines")
+          .select("*")
+          .eq("submission_id", liveJgSubmission.id)
+          .order("sort_order")
+      : Promise.resolve({ data: [] as JgSubmissionLine[] }),
+  ]);
   const invoiceLines = (invoiceLineRows ?? []) as InvoiceLineItem[];
+  const jgLines = (jgLineRows ?? []) as JgSubmissionLine[];
 
   const offerPeople = await profilesByIds(
     supabase,
@@ -510,6 +533,15 @@ export default async function AdminJobDetail({
           liveInvoice={liveInvoice}
           lines={invoiceLines}
           voided={voidedInvoices}
+        />
+      ) : null}
+
+      {["completed", "approved", "paid"].includes(job.status) || jgSubmissions.length > 0 ? (
+        <JgPanel
+          job={job}
+          liveSubmission={liveJgSubmission}
+          lines={jgLines}
+          voided={voidedJgSubmissions}
         />
       ) : null}
 
